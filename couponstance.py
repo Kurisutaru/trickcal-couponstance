@@ -41,7 +41,11 @@
 import os
 import asyncio
 import logging
+import dotenv
 from playwright.async_api import async_playwright
+
+# Load the .env
+dotenv.load_dotenv()
 
 # Get the directory where the script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))

@@ -10,7 +10,7 @@ Required to Run below first
 Input your UID or multiple UID in .env (Please read the comment on .env)
 ### Playwright Install
 ```bash
-playwright install --with-deps chromium
+playwright install chromium
 ```
 ### And run as usual
 ```python
