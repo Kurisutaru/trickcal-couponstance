@@ -116,9 +116,10 @@ async def couponstance():
             pass
 
         # IOS 쿠폰 입력
+        logging.info(f"Coupon : {coupon_code}")
+
         for UID in UID_LIST:
-            logging.info(f"Coupon : {coupon_code}")
-            logging.info(f"Entrying Coupon for ID {UID}")
+            logging.info(f"Entrying Coupon for ID : {UID}")
             await page.goto(IOS_COUPON_URL, wait_until='load')
             await page.fill('#UserId', UID)
             await page.fill('#CouponCode', coupon_code)
