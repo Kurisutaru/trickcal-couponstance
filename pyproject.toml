@@ -1,0 +1,9 @@
+[project]
+name = "trickcal-couponstance"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.54.0",
+    "python-env>=1.0.0",
+]

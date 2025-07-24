@@ -40,7 +40,25 @@
 
 import os
 import asyncio
+import logging
 from playwright.async_api import async_playwright
+
+# Get the directory where the script is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Configure logging
+log_file = os.path.join(script_dir, 'app.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+
+uid_list = os.getenv("TRICKAL_UID", "").split(',')
 
 # 트릭컬 리바이브 URL
 BASE_URL = 'https://game.naver.com'
@@ -48,9 +66,17 @@ BASE_URL = 'https://game.naver.com'
 COUPON_NOTICE_BOARD_URL = 'https://game.naver.com/lounge/Trickcal/board/31'
 # IOS 쿠폰 입력 페이지
 IOS_COUPON_URL ='https://coupon.a.prod.service.trickcal.io/'
+# UID
+UID_LIST = os.getenv("TRICKAL_UID", "").split(',')
+UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
 
 async def couponstance():
     async with async_playwright() as p:
+
+        if not UID_LIST:
+            logging.info("UID Not found")
+            return
+
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
         page = await context.new_page()
@@ -75,12 +101,29 @@ async def couponstance():
                     coupon_code = await elements[i + 1].text_content()
                 break
 
+        # Adding Local Coupon version checker
+        try:
+            with open('latest_coupon.txt', 'r') as f:
+                latest_coupon = f.read().strip()
+            if latest_coupon == coupon_code:
+                logging.info(f"Coupon Same, Exiting !")
+                return
+        except FileNotFoundError:
+            pass
+
         # IOS 쿠폰 입력
-        await page.goto(IOS_COUPON_URL, wait_until='load')
-        await page.fill('#UserId', os.getenv("TRICKAL_UID"))
-        await page.fill('#CouponCode', coupon_code)
-        await page.click('button[onclick="CouponSubmit()"]')
-        await page.wait_for_timeout(5000)
+        for UID in UID_LIST:
+            logging.info(f"Coupon : {coupon_code}")
+            logging.info(f"Entrying Coupon for ID {UID}")
+            await page.goto(IOS_COUPON_URL, wait_until='load')
+            await page.fill('#UserId', UID)
+            await page.fill('#CouponCode', coupon_code)
+            await page.click('button[onclick="CouponSubmit()"]')
+            await page.wait_for_timeout(5000)
+
+        # Update Coupon to Local Coupon file if Different or Not Exist
+        with open('latest_coupon.txt', 'w') as f:
+            f.write(coupon_code)
         await browser.close()
 
 asyncio.run(couponstance())
