@@ -41,6 +41,7 @@
 import asyncio
 import logging
 import os
+import random
 
 import dotenv
 from playwright.async_api import async_playwright
@@ -77,6 +78,9 @@ UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
 
 THREAD_COUPON_TITLE = "[쿠폰]"
 COUPON_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
+COUPON_MESSAGE_COOLDOWN= "쿠폰 입력 쿨타임 중입니다.잠시 후 다시 이용해주세요."
+COUPON_MESSAGE_ALREADY_USED = "이미 사용된 쿠폰입니다."
+MAX_RETRIES = 3
 
 
 # Get the link
@@ -140,6 +144,48 @@ async def extract_coupon_code(page, full_url):
         return None
 
 
+async def human_like_delay(min_ms=100, max_ms=500):
+    """Add a random delay to mimic human behavior."""
+    await asyncio.sleep(random.uniform(min_ms / 1000, max_ms / 1000))
+
+
+async def submit_coupon(page, uid, coupon_code):
+    """Submit coupon for a given UID."""
+    logging.info(f"Entrying Coupon for ID: {uid}")
+    await page.goto(IOS_COUPON_URL, wait_until='load')
+
+    # Simulate human-like behavior
+    await human_like_delay(500, 1500)
+    await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+    await page.locator('#UserId').type(uid, delay=random.randint(50, 150))
+    await human_like_delay(300, 1000)
+    await page.locator('#CouponCode').type(coupon_code, delay=random.randint(50, 150))
+
+    await human_like_delay(500, 1500)
+    await page.click('button[onclick="CouponSubmit()"]')
+    await human_like_delay(1000, 3000)
+
+    # Get result message
+    result = await page.locator('#result-message').text_content()
+    logging.info(f"Result for UID {uid}: {result}")
+    return result
+
+
+async def submit_coupon_with_retry(page, uid, coupon_code):
+    """Submit coupon with retry logic for cooldown."""
+    for attempt in range(MAX_RETRIES):
+        result = await submit_coupon(page, uid, coupon_code)
+        if "쿨타임" in result:
+            wait_time = (2 ** attempt) * 30  # Exponential backoff: 30s, 60s, 120s
+            logging.info(
+                f"Cooldown detected for UID {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time} seconds...")
+            await human_like_delay(wait_time * 1000, (wait_time + 5) * 1000)
+        else:
+            return result
+    logging.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
+    return result
+
+
 async def couponstance():
     async with async_playwright() as p:
 
@@ -173,14 +219,24 @@ async def couponstance():
 
         # IOS 쿠폰 입력
         logging.info(f"Coupon : {coupon_code}")
+        redeemed_uids = []
 
         for UID in UID_LIST:
-            logging.info(f"Entrying Coupon for ID : {UID}")
-            await page.goto(IOS_COUPON_URL, wait_until='load')
-            await page.fill('#UserId', UID)
-            await page.fill('#CouponCode', coupon_code)
-            await page.click('button[onclick="CouponSubmit()"]')
-            await page.wait_for_timeout(5000)
+            # Submit coupon with retry logic
+            result = await submit_coupon_with_retry(page, UID, coupon_code)
+
+            # Handle already-used coupon
+            if COUPON_MESSAGE_ALREADY_USED in result:
+                logging.info(f"Coupon already used for UID: {UID}")
+                redeemed_uids.append(UID)
+            elif COUPON_MESSAGE_COOLDOWN not in result:
+                logging.info(f"Success or other result for UID {UID}: {result}")
+                redeemed_uids.append(UID)
+
+            # Clean up
+            await human_like_delay(5000, 10000)  # Delay between UIDs
+
+        logging.info(f"Redeemed or processed UIDs: {redeemed_uids}")
 
         # Update Coupon to Local Coupon file if Different or Not Exist
         with open('latest_coupon.txt', 'w') as f:
