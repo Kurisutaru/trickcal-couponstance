@@ -42,9 +42,11 @@ import asyncio
 import logging
 import os
 import random
+import re
 from datetime import datetime, timezone
 
 import requests
+from dateutil import tz
 from environs import env
 from playwright.async_api import async_playwright
 
@@ -78,6 +80,7 @@ UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
 
 THREAD_COUPON_TITLE = "[쿠폰]"
 COUPON_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
+COUPON_CLAIM_DATE = "사용 기한"
 COUPON_MESSAGE_COOLDOWN = "쿠폰 입력 쿨타임 중입니다.잠시 후 다시 이용해주세요."
 COUPON_MESSAGE_ALREADY_USED = "이미 사용된 쿠폰입니다."
 MAX_RETRIES = 3
@@ -86,6 +89,39 @@ MAX_RETRIES = 3
 POST_COUPON = env.bool("POST_COUPON")
 POST_DISCORD = env.bool("POST_DISCORD")
 DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
+
+
+# Format following Trickcal Naver post
+def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str:
+    """
+    Convert "7월 28일 18:00" or "9월 9일" into a UTC epoch.
+    If hour:minute is missing it becomes 00:00.
+    """
+    # Regex: month/day, optional hour:minute
+    RE = re.compile(
+        r'(?P<month>\d+)월\s+'
+        r'(?P<day>\d+)일'
+        r'(?:\s+(?P<hour>\d{1,2}):(?P<minute>\d{2}))?'  # optional
+    )
+    m = RE.search(korean)
+    if not m:
+        raise ValueError(f"Cannot parse Korean date string: {korean!r}")
+
+    month = int(m.group('month'))
+    day = int(m.group('day'))
+    hour = int(m.group('hour')) if m.group('hour') else 0
+    minute = int(m.group('minute')) if m.group('minute') else 0
+
+    # Guess the correct year – roll over to next year if month < current month
+    now = datetime.now(tz=tz.gettz(tz_src))
+    year = now.year + (month < now.month)
+
+    local_dt = datetime(year, month, day, hour, minute, tzinfo=tz.gettz(tz_src))
+    utc_dt = local_dt.astimezone(tz.UTC)
+    if hour == 0 and minute == 0:
+        return f"<t:{int(utc_dt.timestamp())}:D>"
+    else:
+        return f"<t:{int(utc_dt.timestamp())}:f>"
 
 
 # Get the link
@@ -110,10 +146,11 @@ async def extract_coupon_link(page):
 
 
 # Assuming you're already on the target page
-async def extract_coupon_code_and_image(page, full_url):
+async def extract_coupon_code_and_stuff(page, full_url):
     # Load page
     await page.goto(full_url, wait_until='load')
 
+    # Coupon Code
     # Step 1: Find the <p> that has a <span> containing "쿠폰 코드" and get its next sibling
     coupon_label_locator = page.locator('p').filter(has_text=COUPON_HEADER).first
 
@@ -133,13 +170,13 @@ async def extract_coupon_code_and_image(page, full_url):
 
     # Step 3: Extract text from span inside next <p>
     # Instead of evaluate, use locator to find span and get text
-    span_locator = next_p_locator.locator('span').first
+    coupon_code_span_locator = next_p_locator.locator('span').first
 
-    if not await span_locator.count():
+    if not await coupon_code_span_locator.count():
         logging.info("❌ No span found in next <p>")
         return None
 
-    coupon_code = await span_locator.text_content()
+    coupon_code = await coupon_code_span_locator.text_content()
 
     if coupon_code and coupon_code.strip():
         coupon_code = coupon_code.strip()
@@ -148,7 +185,42 @@ async def extract_coupon_code_and_image(page, full_url):
         logging.info("❌ Empty or no span text")
         coupon_code = None
 
-    # Step 4: Extract image from the page
+    # Coupon Date
+    # Step 1: Find the <p> that has a <span> containing "사용 기한" and get its next sibling
+    coupon_date_locator = page.locator('p').filter(has_text=COUPON_CLAIM_DATE).first
+
+    # Ensure the coupon label element is actually found before proceeding
+    await coupon_date_locator.wait_for()
+
+    if not await coupon_date_locator.count():
+        logging.info(f"❌ '{COUPON_CLAIM_DATE}' not found in any <p>")
+        return None
+
+    # Step 2: Get the very next <p> sibling (adjacent sibling)
+    next_p_locator = coupon_date_locator.locator('xpath=following-sibling::p[1]')
+
+    if not await next_p_locator.count():
+        logging.info("❌ No next <p> found")
+        return None
+
+    # Step 3: Extract text from span inside next <p>
+    # Instead of evaluate, use locator to find span and get text
+    coupon_claim_date_span_locator = next_p_locator.locator('span').first
+
+    if not await coupon_claim_date_span_locator.count():
+        logging.info("❌ No span found in next <p>")
+        return None
+
+    coupon_date = await coupon_claim_date_span_locator.text_content()
+
+    if coupon_date and coupon_date.strip():
+        coupon_date = coupon_date.strip()
+        logging.info(f"✅ Coupon claim date: {coupon_date}")
+    else:
+        logging.info("❌ Empty or no span text")
+        coupon_date = None
+
+    # Coupon Image
     coupon_image_locator = page.locator('div[class*="e-component-content-fit"] img')
     coupon_image = None
 
@@ -168,6 +240,7 @@ async def extract_coupon_code_and_image(page, full_url):
     if coupon_code:
         return {
             'coupon_code': coupon_code,
+            'coupon_date': coupon_date,
             'coupon_image': coupon_image
         }
     else:
@@ -239,9 +312,9 @@ async def main_coupon_submit(page, coupon_code):
     logging.info(f"Redeemed or processed UIDs: {redeemed_uids}")
 
 
-async def main_post_discord(coupon_code, coupon_image):
+async def main_post_discord(coupon_code, coupon_image, coupon_date):
     logging.info(f"Posting to Discord . . .")
-    send_discord_embed(coupon_code, coupon_image)
+    send_discord_embed(coupon_code, coupon_image, coupon_date)
 
 
 def get_random_hex_color():
@@ -250,7 +323,7 @@ def get_random_hex_color():
     return random_color
 
 
-def send_discord_embed(coupon_code, coupon_image):
+def send_discord_embed(coupon_code, coupon_image, coupon_date):
     # Create the main patch update embed
     now_iso8601 = (
         datetime.now(timezone.utc)  # get current *UTC* datetime
@@ -259,14 +332,18 @@ def send_discord_embed(coupon_code, coupon_image):
         .replace('+00:00', 'Z')  # add the UTC “Z” suffix
     )
 
+    split_coupon_date = coupon_date.split('~')
+    claim_date_from = _korean_to_utc_epoch_discord(split_coupon_date[0])
+    claim_date_to = _korean_to_utc_epoch_discord(split_coupon_date[1])
+
     patch_embed = {
-        "title": "Trickcal KR - Coupon",
+        "title": "Trickcal RE:VIVE KR - Coupon",
         "author": {
             "name": "ERPINI COUPON POSTER",
             "url": "https://www.kurisutaru.net",
             "icon_url": "https://i.imgur.com/eTEpq7I.png"
         },
-        #"description": "A coupon is available !",
+        # "description": "A coupon is available !",
         "fields": [
             {
                 "name": "Coupon Code",
@@ -277,13 +354,18 @@ def send_discord_embed(coupon_code, coupon_image):
                 "name": "Coupon Claim",
                 "value": f"[Ingame or click here]({IOS_COUPON_URL})",
                 "inline": False
+            },
+            {
+                "name": "Coupon Claim Period",
+                "value": f"{claim_date_from} ~ {claim_date_to}",
+                "inline": False
             }
         ],
         "image": {
             "url": coupon_image
         },
         "footer": {
-            "text": "ERPINI COUPON POSTER powered by 🍬 and 🍰",
+            "text": "ERPINI COUPON POSTER powered by 🍬🍭🍰🥖",
             "icon_url": "https://i.imgur.com/eTEpq7I.png"
         },
         "timestamp": f"{now_iso8601}",
@@ -320,11 +402,12 @@ async def couponstance():
             return
 
         # Get the Coupon from Coupon Page
-        result = await extract_coupon_code_and_image(page, full_url)
+        result = await extract_coupon_code_and_stuff(page, full_url)
         if not result:
             return
         coupon_code = result.get('coupon_code')
         coupon_image = result.get('coupon_image')
+        coupon_date = result.get('coupon_date')
 
         # Adding Local Coupon version checker
         try:
@@ -340,7 +423,7 @@ async def couponstance():
             await main_coupon_submit(page, coupon_code)
 
         if POST_DISCORD and DISCORD_WEBHOOK_URL:
-            await main_post_discord(coupon_code, coupon_image)
+            await main_post_discord(coupon_code, coupon_image, coupon_date)
 
         # Update Coupon to Local Coupon file if Different or Not Exist
         with open('latest_coupon.txt', 'w') as f:
