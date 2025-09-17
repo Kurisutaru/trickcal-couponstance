@@ -42,12 +42,14 @@ import asyncio
 import logging
 import os
 import random
+from datetime import datetime, timezone
 
-import dotenv
+import requests
+from environs import env
 from playwright.async_api import async_playwright
 
 # Load the .env
-dotenv.load_dotenv()
+env.read_env()
 
 # Get the directory where the script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -64,8 +66,6 @@ logging.basicConfig(
     ]
 )
 
-uid_list = os.getenv("TRICKAL_UID", "").split(',')
-
 # 트릭컬 리바이브 URL
 BASE_URL = 'https://game.naver.com'
 # 쿠폰 게시판 URL
@@ -73,14 +73,19 @@ COUPON_NOTICE_BOARD_URL = 'https://game.naver.com/lounge/Trickcal/board/31'
 # IOS 쿠폰 입력 페이지
 IOS_COUPON_URL = 'https://coupon.a.prod.service.trickcal.io/'
 # UID
-UID_LIST = os.getenv("TRICKAL_UID", "").split(',')
+UID_LIST = env.list("TRICKAL_UID")
 UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
 
 THREAD_COUPON_TITLE = "[쿠폰]"
 COUPON_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
-COUPON_MESSAGE_COOLDOWN= "쿠폰 입력 쿨타임 중입니다.잠시 후 다시 이용해주세요."
+COUPON_MESSAGE_COOLDOWN = "쿠폰 입력 쿨타임 중입니다.잠시 후 다시 이용해주세요."
 COUPON_MESSAGE_ALREADY_USED = "이미 사용된 쿠폰입니다."
 MAX_RETRIES = 3
+
+# Config loader
+POST_COUPON = env.bool("POST_COUPON")
+POST_DISCORD = env.bool("POST_DISCORD")
+DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 
 
 # Get the link
@@ -105,42 +110,67 @@ async def extract_coupon_link(page):
 
 
 # Assuming you're already on the target page
-async def extract_coupon_code(page, full_url):
+async def extract_coupon_code_and_image(page, full_url):
     # Load page
     await page.goto(full_url, wait_until='load')
-    # Step 1: Find the <p> that has a <span> containing "쿠폰 코드"
-    # Using locator and exact text match with filtering
-    coupon_label = await page.locator('p').filter(has_text=COUPON_HEADER).first.element_handle()
 
-    if not coupon_label:
+    # Step 1: Find the <p> that has a <span> containing "쿠폰 코드" and get its next sibling
+    coupon_label_locator = page.locator('p').filter(has_text=COUPON_HEADER).first
+
+    # Ensure the coupon label element is actually found before proceeding
+    await coupon_label_locator.wait_for()
+
+    if not await coupon_label_locator.count():
         logging.info(f"❌ '{COUPON_HEADER}' not found in any <p>")
         return None
 
     # Step 2: Get the very next <p> sibling (adjacent sibling)
-    next_p = await page.evaluate_handle(
-        """(el) => {
-            const next = el.nextElementSibling;
-            return next && next.tagName === 'P' ? next : null;
-        }""",
-        coupon_label
-    )
+    next_p_locator = coupon_label_locator.locator('xpath=following-sibling::p[1]')
 
-    if not next_p or await next_p.evaluate("e => !e"):
+    if not await next_p_locator.count():
         logging.info("❌ No next <p> found")
         return None
 
     # Step 3: Extract text from span inside next <p>
-    coupon_code = await next_p.evaluate("""(p) => {
-        return p.querySelector('span')?.innerText.trim();
-    }""")
+    # Instead of evaluate, use locator to find span and get text
+    span_locator = next_p_locator.locator('span').first
 
-    await next_p.dispose()
+    if not await span_locator.count():
+        logging.info("❌ No span found in next <p>")
+        return None
 
-    if coupon_code:
+    coupon_code = await span_locator.text_content()
+
+    if coupon_code and coupon_code.strip():
+        coupon_code = coupon_code.strip()
         logging.info(f"✅ Coupon code: {coupon_code}")
-        return coupon_code
     else:
         logging.info("❌ Empty or no span text")
+        coupon_code = None
+
+    # Step 4: Extract image from the page
+    coupon_image_locator = page.locator('div[class*="e-component-content-fit"] img')
+    coupon_image = None
+
+    if await coupon_image_locator.count() > 0:
+        try:
+            coupon_image = await coupon_image_locator.first.get_attribute('src')
+            if coupon_image:
+                logging.info(f"✅ Coupon Image found: {coupon_image}")
+            else:
+                logging.info("❌ Image element found but no src attribute")
+        except Exception as e:
+            logging.info(f"❌ Error extracting image: {e}")
+    else:
+        logging.info("❌ No image found with selector 'div[class*=\"e-component-content-fit\"] img'")
+
+    # Return both coupon code and image
+    if coupon_code:
+        return {
+            'coupon_code': coupon_code,
+            'coupon_image': coupon_image
+        }
+    else:
         return None
 
 
@@ -186,6 +216,93 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
     return result
 
 
+async def main_coupon_submit(page, coupon_code):
+    # IOS 쿠폰 입력
+    logging.info(f"Coupon : {coupon_code}")
+    redeemed_uids = []
+
+    for UID in UID_LIST:
+        # Submit coupon with retry logic
+        result = await submit_coupon_with_retry(page, UID, coupon_code)
+
+        # Handle already-used coupon
+        if COUPON_MESSAGE_ALREADY_USED in result:
+            logging.info(f"Coupon already used for UID: {UID}")
+            redeemed_uids.append(UID)
+        elif COUPON_MESSAGE_COOLDOWN not in result:
+            logging.info(f"Success or other result for UID {UID}: {result}")
+            redeemed_uids.append(UID)
+
+        # Clean up
+        await human_like_delay(5000, 10000)  # Delay between UIDs
+
+    logging.info(f"Redeemed or processed UIDs: {redeemed_uids}")
+
+
+async def main_post_discord(coupon_code, coupon_image):
+    logging.info(f"Posting to Discord . . .")
+    send_discord_embed(coupon_code, coupon_image)
+
+
+def get_random_hex_color():
+    # Generate a random integer between 0 and 0xFFFFFF
+    random_color = random.randint(0, 0xFFFFFF)
+    return random_color
+
+
+def send_discord_embed(coupon_code, coupon_image):
+    # Create the main patch update embed
+    now_iso8601 = (
+        datetime.now(timezone.utc)  # get current *UTC* datetime
+        .replace(microsecond=0)  # drop microseconds → keep 3‑digit ms
+        .isoformat(timespec='milliseconds')  # 2025‑09‑16T12:34:56.789
+        .replace('+00:00', 'Z')  # add the UTC “Z” suffix
+    )
+
+    patch_embed = {
+        "title": "Trickcal KR - Coupon",
+        "author": {
+            "name": "ERPINI COUPON POSTER",
+            "url": "https://www.kurisutaru.net",
+            "icon_url": "https://i.imgur.com/eTEpq7I.png"
+        },
+        #"description": "A coupon is available !",
+        "fields": [
+            {
+                "name": "Coupon Code",
+                "value": f"```{coupon_code}```",
+                "inline": False
+            },
+            {
+                "name": "Coupon Claim",
+                "value": f"[Ingame or click here]({IOS_COUPON_URL})",
+                "inline": False
+            }
+        ],
+        "image": {
+            "url": coupon_image
+        },
+        "footer": {
+            "text": "ERPINI COUPON POSTER powered by 🍬 and 🍰",
+            "icon_url": "https://i.imgur.com/eTEpq7I.png"
+        },
+        "timestamp": f"{now_iso8601}",
+        "color": get_random_hex_color()  # Hex color code for Discord embed
+    }
+
+    # Send both embeds in the same request
+    payload = {
+        "embeds": [patch_embed]
+    }
+
+    response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+    if response.status_code == 204:
+        logging.info("✅ Posting to Discord Done !")
+    else:
+        logging.error(f"Failed to send embeds. HTTP Response Code: {response.status_code}")
+        logging.error(f"Payload: {payload}")
+
+
 async def couponstance():
     async with async_playwright() as p:
 
@@ -203,9 +320,11 @@ async def couponstance():
             return
 
         # Get the Coupon from Coupon Page
-        coupon_code = await extract_coupon_code(page, full_url)
-        if not coupon_code:
+        result = await extract_coupon_code_and_image(page, full_url)
+        if not result:
             return
+        coupon_code = result.get('coupon_code')
+        coupon_image = result.get('coupon_image')
 
         # Adding Local Coupon version checker
         try:
@@ -217,26 +336,11 @@ async def couponstance():
         except FileNotFoundError:
             pass
 
-        # IOS 쿠폰 입력
-        logging.info(f"Coupon : {coupon_code}")
-        redeemed_uids = []
+        if POST_COUPON:
+            await main_coupon_submit(page, coupon_code)
 
-        for UID in UID_LIST:
-            # Submit coupon with retry logic
-            result = await submit_coupon_with_retry(page, UID, coupon_code)
-
-            # Handle already-used coupon
-            if COUPON_MESSAGE_ALREADY_USED in result:
-                logging.info(f"Coupon already used for UID: {UID}")
-                redeemed_uids.append(UID)
-            elif COUPON_MESSAGE_COOLDOWN not in result:
-                logging.info(f"Success or other result for UID {UID}: {result}")
-                redeemed_uids.append(UID)
-
-            # Clean up
-            await human_like_delay(5000, 10000)  # Delay between UIDs
-
-        logging.info(f"Redeemed or processed UIDs: {redeemed_uids}")
+        if POST_DISCORD and DISCORD_WEBHOOK_URL:
+            await main_post_discord(coupon_code, coupon_image)
 
         # Update Coupon to Local Coupon file if Different or Not Exist
         with open('latest_coupon.txt', 'w') as f:
