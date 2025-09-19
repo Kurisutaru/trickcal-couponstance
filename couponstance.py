@@ -39,17 +39,19 @@
 # ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 import asyncio
-import json
 import logging
 import os
 import random
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse, unquote
 
+import filetype
 import requests
 from dateutil import tz
+from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from playwright.async_api import async_playwright
 
@@ -325,141 +327,89 @@ def get_random_hex_color():
     random_color = random.randint(0, 0xFFFFFF)
     return random_color
 
-def download_and_save_image(url: str, coupon_code: str) -> str:
+
+def detect_extension(url: str, sample_bytes: int = 512) -> Optional[str]:
     """
-    Download the image only if the local folder does not already contain
-    an image with the same *coupon_code*.  If more than one image
-    exists, keep only the newest and delete any older ones.
-
-    Parameters
-    ----------
-    url : str
-        Remote URL of the image to download.
-    coupon_code : str
-        Coupon code – used as the base filename.
-
-    Returns
-    -------
-    str
-        The file name (not the full path) that will be used in the
-        Discord embed, e.g. ``123ABC.png``.
+    Return the image file extension (e.g. 'png', 'jpg') for the remote *url*.
     """
-    # Make sure the destination directory exists
-    images_dir = Path("image")
-    images_dir.mkdir(parents=True, exist_ok=True)
 
-    # ---- 1. Look for existing files --------------------------------
-    existing = list(images_dir.glob(f"{coupon_code}.*"))  # e.g. 123ABC.png
-    if existing:
-        # Keep the newest (most recently modified)
-        existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        newest = existing[0]
-        # Delete every other older file
-        for old_file in existing[1:]:
-            try:
-                old_file.unlink()
-                logging.debug(f"Deleted old image: {old_file}")
-            except OSError as exc:
-                logging.warning(f"Could not delete {old_file}: {exc}")
+    # ------------------------------------------------------------
+    # 1️⃣  Quick look from the HTTP `Content-Type` header
+    # ------------------------------------------------------------
+    try:
+        head = requests.head(url, allow_redirects=True, timeout=10)
+        if head.ok:
+            ct = head.headers.get("Content-Type", "").lower()
+            # `filetype.is_image` works on MIME types when you know it’s an image.
+            # Mapping the MIME to the canonical extension:
+            mime_to_ext = {
+                "image/jpeg": "jpg",
+                "image/pjpeg": "jpg",  # progressive JPEG
+                "image/png": "png",
+                "image/gif": "gif",
+                "image/webp": "webp",
+                "image/bmp": "bmp",
+                "image/tiff": "tif",
+                "image/x-icon": "ico",
+                "image/svg+xml": "svg",
+            }
+            if ct in mime_to_ext:
+                return mime_to_ext[ct]
 
-        logging.info(f"Using existing image: {newest.name}")
-        return newest.name
+    except (requests.RequestException, Exception):
+        # network hiccup → skip to the binary check
+        pass
 
-    # ---- 2. No existing file → download --------------------------------
-    # Extract file extension from the URL (handles query strings)
-    parsed = urlparse(url)
-    basename = os.path.basename(parsed.path)          # e.g. `img.jpeg`
-    basename = unquote(basename)                     # decode %20 etc.
-    _, ext = os.path.splitext(basename)              # e.g. (img, .jpeg)
+    # ------------------------------------------------------------
+    # 2️⃣  Stream only a few bytes for magic‑number sniffing
+    # ------------------------------------------------------------
+    try:
+        with requests.get(url, stream=True, timeout=10) as r:
+            r.raise_for_status()
+            sample = r.raw.read(sample_bytes)  # 512bytes is enough for filetype
+    except (requests.RequestException, Exception):
+        return None
 
-    # Fallback to .jpg if we cannot determine an extension
-    if not ext:
-        ext = ".jpg"
+    # ------------------------------------------------------------
+    # 3️⃣  Let filetype decide
+    # ------------------------------------------------------------
+    kind = filetype.guess(sample)
+    return kind.extension if kind else None
 
-    filename = f"{coupon_code}{ext}"
-    local_path = Path("image") / filename
-
-    # Stream download (in case the file is large)
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(local_path, "wb") as fh:
-            for chunk in r.iter_content(chunk_size=8192):
-                fh.write(chunk)
-
-    return filename
 
 def send_discord_embed(coupon_code, coupon_image, coupon_date):
-    # 1) Download & save the image (returns the local filename)
-    try:
-        local_filename = download_and_save_image(coupon_image, coupon_code)
-    except Exception as exc:
-        logging.error(f"Failed to download image: {exc}")
-        return
-
-    # Create the main patch update embed
-    now_iso8601 = (
-        datetime.now(timezone.utc)  # get current *UTC* datetime
-        .replace(microsecond=0)  # drop microseconds → keep 3‑digit ms
-        .isoformat(timespec='milliseconds')  # 2025‑09‑16T12:34:56.789
-        .replace('+00:00', 'Z')  # add the UTC “Z” suffix
-    )
+    local_filename = f"{coupon_code}.{detect_extension(coupon_image)}"
 
     split_coupon_date = coupon_date.split('~')
     claim_date_from = _korean_to_utc_epoch_discord(split_coupon_date[0])
     claim_date_to = _korean_to_utc_epoch_discord(split_coupon_date[1])
+    embed_claim_date = f"{claim_date_from} ~ {claim_date_to}"
 
-    patch_embed = {
-        "title": "Trickcal RE:VIVE KR - Coupon",
-        "author": {
-            "name": "ERPINI COUPON POSTER",
-            "url": "https://www.kurisutaru.net",
-            "icon_url": "https://i.imgur.com/eTEpq7I.png"
-        },
-        # "description": "A coupon is available !",
-        "fields": [
-            {
-                "name": "Coupon Code",
-                "value": f"```{coupon_code}```",
-                "inline": False
-            },
-            {
-                "name": "Coupon Claim",
-                "value": f"[Ingame or click here]({IOS_COUPON_URL})",
-                "inline": False
-            },
-            {
-                "name": "Coupon Claim Period",
-                "value": f"{claim_date_from} ~ {claim_date_to}",
-                "inline": False
-            }
-        ],
-        "image": {
-            "url": f"attachment://{local_filename}"
-        },
-        "footer": {
-            "text": "ERPINI COUPON POSTER powered by 🍬🍭🍰🥖",
-            "icon_url": "https://i.imgur.com/eTEpq7I.png"
-        },
-        "timestamp": f"{now_iso8601}",
-        "color": get_random_hex_color()  # Hex color code for Discord embed
-    }
+    webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL)
 
-    # Send both embeds in the same request
-    payload = {
-        "embeds": [patch_embed]
-    }
-    json_body = json.dumps(payload)
+    embed = DiscordEmbed(title="Trickcal RE:VIVE KR - Coupon", color=get_random_hex_color())
 
-    with open(Path("image") / local_filename, "rb") as f:
-        files = {"file": (local_filename, f, "application/octet-stream")}
-        data = {"payload_json": json_body}
-        response = requests.post(DISCORD_WEBHOOK_URL, data=data, files=files)
+    embed.set_timestamp()
+    embed.set_author(name="ERPINI COUPON POSTER",
+                     url="https://www.kurisutaru.net",
+                     icon_url="https://i.imgur.com/eTEpq7I.png")
+
+    embed.add_embed_field(name="Coupon Code", value=coupon_code, inline=False)
+    embed.add_embed_field(name="Coupon Claim", value=f"[Ingame or click here]({IOS_COUPON_URL})", inline=False)
+    embed.add_embed_field(name="Coupon Claim Period", value=embed_claim_date, inline=False)
+    embed.set_footer(text="ERPINI COUPON POSTER powered by 🍬🍭🍰🥖", icon_url="https://i.imgur.com/eTEpq7I.png")
+
+    with requests.get(coupon_image, stream=True) as r:
+        webhook.add_file(file=r.content, filename=local_filename)
+        embed.set_image(url=f"attachment://{local_filename}")
+
+    webhook.add_embed(embed)
+    response = webhook.execute()
 
     if response.ok:
         logging.info("✅ Posting to Discord Done !")
     else:
         logging.error(f"Failed to send embeds. HTTP Response Code: {response.status_code}")
-        logging.error(f"Payload: {payload}")
 
 
 async def couponstance():
