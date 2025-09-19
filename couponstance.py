@@ -39,11 +39,14 @@
 # ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 import asyncio
+import json
 import logging
 import os
 import random
 import re
 from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse, unquote
 
 import requests
 from dateutil import tz
@@ -322,8 +325,45 @@ def get_random_hex_color():
     random_color = random.randint(0, 0xFFFFFF)
     return random_color
 
+def download_and_save_image(url: str, coupon_code: str) -> str:
+    """
+    Downloads an image from *url* and stores it in the local
+    `image/` directory.
+    Returns the filename that was saved, e.g. `123ABC.png`.
+    """
+    # Ensure the directory exists
+    Path("image").mkdir(parents=True, exist_ok=True)
+
+    # Extract file extension from the URL (handles query strings)
+    parsed = urlparse(url)
+    basename = os.path.basename(parsed.path)          # e.g. `img.jpeg`
+    basename = unquote(basename)                     # decode %20 etc.
+    _, ext = os.path.splitext(basename)              # e.g. (img, .jpeg)
+
+    # Fallback to .jpg if we cannot determine an extension
+    if not ext:
+        ext = ".jpg"
+
+    filename = f"{coupon_code}{ext}"
+    local_path = Path("image") / filename
+
+    # Stream download (in case the file is large)
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(local_path, "wb") as fh:
+            for chunk in r.iter_content(chunk_size=8192):
+                fh.write(chunk)
+
+    return filename
 
 def send_discord_embed(coupon_code, coupon_image, coupon_date):
+    # 1) Download & save the image (returns the local filename)
+    try:
+        local_filename = download_and_save_image(coupon_image, coupon_code)
+    except Exception as exc:
+        logging.error(f"Failed to download image: {exc}")
+        return
+
     # Create the main patch update embed
     now_iso8601 = (
         datetime.now(timezone.utc)  # get current *UTC* datetime
@@ -362,7 +402,7 @@ def send_discord_embed(coupon_code, coupon_image, coupon_date):
             }
         ],
         "image": {
-            "url": coupon_image
+            "url": f"attachment://{local_filename}"
         },
         "footer": {
             "text": "ERPINI COUPON POSTER powered by 🍬🍭🍰🥖",
@@ -376,9 +416,14 @@ def send_discord_embed(coupon_code, coupon_image, coupon_date):
     payload = {
         "embeds": [patch_embed]
     }
+    json_body = json.dumps(payload)
 
-    response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-    if response.status_code == 204:
+    with open(Path("image") / local_filename, "rb") as f:
+        files = {"file": (local_filename, f, "application/octet-stream")}
+        data = {"payload_json": json_body}
+        response = requests.post(DISCORD_WEBHOOK_URL, data=data, files=files)
+
+    if response.ok:
         logging.info("✅ Posting to Discord Done !")
     else:
         logging.error(f"Failed to send embeds. HTTP Response Code: {response.status_code}")
