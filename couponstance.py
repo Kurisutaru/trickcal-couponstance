@@ -327,13 +327,45 @@ def get_random_hex_color():
 
 def download_and_save_image(url: str, coupon_code: str) -> str:
     """
-    Downloads an image from *url* and stores it in the local
-    `image/` directory.
-    Returns the filename that was saved, e.g. `123ABC.png`.
-    """
-    # Ensure the directory exists
-    Path("image").mkdir(parents=True, exist_ok=True)
+    Download the image only if the local folder does not already contain
+    an image with the same *coupon_code*.  If more than one image
+    exists, keep only the newest and delete any older ones.
 
+    Parameters
+    ----------
+    url : str
+        Remote URL of the image to download.
+    coupon_code : str
+        Coupon code – used as the base filename.
+
+    Returns
+    -------
+    str
+        The file name (not the full path) that will be used in the
+        Discord embed, e.g. ``123ABC.png``.
+    """
+    # Make sure the destination directory exists
+    images_dir = Path("image")
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- 1. Look for existing files --------------------------------
+    existing = list(images_dir.glob(f"{coupon_code}.*"))  # e.g. 123ABC.png
+    if existing:
+        # Keep the newest (most recently modified)
+        existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        newest = existing[0]
+        # Delete every other older file
+        for old_file in existing[1:]:
+            try:
+                old_file.unlink()
+                logging.debug(f"Deleted old image: {old_file}")
+            except OSError as exc:
+                logging.warning(f"Could not delete {old_file}: {exc}")
+
+        logging.info(f"Using existing image: {newest.name}")
+        return newest.name
+
+    # ---- 2. No existing file → download --------------------------------
     # Extract file extension from the URL (handles query strings)
     parsed = urlparse(url)
     basename = os.path.basename(parsed.path)          # e.g. `img.jpeg`
