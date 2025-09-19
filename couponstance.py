@@ -44,9 +44,7 @@ import os
 import random
 import re
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse, unquote
 
 import filetype
 import requests
@@ -88,7 +86,7 @@ COUPON_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
 COUPON_CLAIM_DATE = "사용 기한"
 COUPON_MESSAGE_COOLDOWN = "쿠폰 입력 쿨타임 중입니다.잠시 후 다시 이용해주세요."
 COUPON_MESSAGE_ALREADY_USED = "이미 사용된 쿠폰입니다."
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 
 # Config loader
 POST_COUPON = env.bool("POST_COUPON")
@@ -110,7 +108,9 @@ def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str
     )
     m = RE.search(korean)
     if not m:
-        raise ValueError(f"Cannot parse Korean date string: {korean!r}")
+        now = datetime.now(tz=tz.gettz(tz_src))
+        utc_now = now.astimezone(tz.UTC)
+        return f"<t:{int(utc_now.timestamp())}:f>"
 
     month = int(m.group('month'))
     day = int(m.group('day'))
@@ -394,7 +394,7 @@ def send_discord_embed(coupon_code, coupon_image, coupon_date):
                      url="https://www.kurisutaru.net",
                      icon_url="https://i.imgur.com/eTEpq7I.png")
 
-    embed.add_embed_field(name="Coupon Code", value=coupon_code, inline=False)
+    embed.add_embed_field(name="Coupon Code", value=f"```{coupon_code}```", inline=False)
     embed.add_embed_field(name="Coupon Claim", value=f"[Ingame or click here]({IOS_COUPON_URL})", inline=False)
     embed.add_embed_field(name="Coupon Claim Period", value=embed_claim_date, inline=False)
     embed.set_footer(text="ERPINI COUPON POSTER powered by 🍬🍭🍰🥖", icon_url="https://i.imgur.com/eTEpq7I.png")
