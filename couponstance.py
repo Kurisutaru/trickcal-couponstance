@@ -81,6 +81,7 @@ IOS_COUPON_URL = 'https://coupon.a.prod.service.trickcal.io/'
 # UID
 UID_LIST = env.list("TRICKAL_UID")
 UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
+FAILED_UID_LIST = []
 
 THREAD_COUPON_TITLE = "[쿠폰]"
 COUPON_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
@@ -94,6 +95,39 @@ POST_COUPON = env.bool("POST_COUPON")
 POST_DISCORD = env.bool("POST_DISCORD")
 DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 
+# Failed name
+FAILED_FILE_NAME = "failed_id.txt"
+FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
+
+
+# For failed / retry UID Read Write Utils
+def read_failed_ids() -> list[str]:
+    """
+    Return the list of previously‑failed UIDs stored in `filename`.
+    If the file does not exist, an empty list is returned.
+    """
+    try:
+        with open(FAILED_FILE_PATH, "r", encoding="utf-8") as f:
+            return [line.rstrip() for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+
+def append_failed_id(uid: str) -> None:
+    """
+    Append a single UID to `filename`.  The line is terminated with a
+    newline so that successive cron jobs can read the file back later.
+    """
+    # 'ab' would force binary mode; use text mode so we get proper \n.
+    with open(FAILED_FILE_PATH, "a", encoding="utf-8") as f:
+        f.write(f"{uid}\n")
+
+
+def append_failed_ids(uids: list[str]) -> None:
+    """Append *each* UID in `uids` to `filename`, one per line."""
+    with open(FAILED_FILE_PATH, "w", encoding="utf-8") as f:
+        f.writelines(f"{uid}\n" for uid in uids)
+
 
 # Format following Trickcal Naver post
 def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str:
@@ -102,12 +136,12 @@ def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str
     If hour:minute is missing it becomes 00:00.
     """
     # Regex: month/day, optional hour:minute
-    RE = re.compile(
+    _regex = re.compile(
         r'(?P<month>\d+)월\s+'
         r'(?P<day>\d+)일'
         r'(?:\s+(?P<hour>\d{1,2}):(?P<minute>\d{2}))?'  # optional
     )
-    m = RE.search(korean)
+    m = _regex.search(korean)
     if not m:
         now = datetime.now(tz=tz.gettz(tz_src))
         utc_now = now.astimezone(tz.UTC)
@@ -292,6 +326,7 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
         else:
             return result
     logging.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
+    FAILED_UID_LIST.append(uid)
     return result
 
 
@@ -307,15 +342,23 @@ async def main_coupon_submit(page, coupon_code):
         # Handle already-used coupon
         if COUPON_MESSAGE_ALREADY_USED in result:
             logging.info(f"Coupon already used for UID: {UID}")
-            redeemed_uids.append(UID)
         elif COUPON_MESSAGE_COOLDOWN not in result:
             logging.info(f"Success or other result for UID {UID}: {result}")
-            redeemed_uids.append(UID)
 
+        # Adding to redeemed uid list
+        redeemed_uids.append(UID)
+        # try to remove from failed uid list, ignore if not exist
+        [FAILED_UID_LIST.remove(elem) for elem in [UID] if elem in FAILED_UID_LIST]
         # Clean up
         await human_like_delay(5000, 10000)  # Delay between UIDs
 
     logging.info(f"Redeemed or processed UIDs: {redeemed_uids}")
+    if len(FAILED_UID_LIST) > 0:
+        append_failed_ids(FAILED_UID_LIST)
+        logging.info(f"Found failed id writing into file for next run.")
+    else:
+        # If no failed id found
+        append_failed_ids([])
 
 
 async def main_post_discord(coupon_code, coupon_image, coupon_date):
@@ -420,6 +463,8 @@ async def couponstance():
             logging.info("UID Not found")
             return
 
+        FAILED_UID_LIST[:] = read_failed_ids()
+
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
         page = await context.new_page()
@@ -441,7 +486,12 @@ async def couponstance():
         try:
             with open('latest_coupon.txt', 'r') as f:
                 latest_coupon = f.read().strip()
-            if latest_coupon == coupon_code:
+            if len(FAILED_UID_LIST) > 0:
+                logging.info(f"Found failed id, trying to submit coupon again.")
+                UID_LIST[:] = FAILED_UID_LIST
+                await main_coupon_submit(page, coupon_code)
+                return
+            elif latest_coupon == coupon_code:
                 logging.info(f"Coupon Same, Exiting !")
                 return
         except FileNotFoundError:
