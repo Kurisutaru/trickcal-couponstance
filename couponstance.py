@@ -95,7 +95,11 @@ POST_COUPON = env.bool("POST_COUPON")
 POST_DISCORD = env.bool("POST_DISCORD")
 DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 
-# Failed name
+# Coupon Name File
+COUPON_FILE_NAME = "latest_coupon.txt"
+COUPON_FILE_PATH = os.path.join(script_dir, COUPON_FILE_NAME)
+
+# Failed Name File
 FAILED_FILE_NAME = "failed_id.txt"
 FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 
@@ -484,16 +488,22 @@ async def couponstance():
 
         # Adding Local Coupon version checker
         try:
-            with open('latest_coupon.txt', 'r') as f:
+            with open(COUPON_FILE_PATH, 'r') as f:
                 latest_coupon = f.read().strip()
-            if len(FAILED_UID_LIST) > 0:
-                logging.info(f"Found failed id, trying to submit coupon again.")
-                UID_LIST[:] = FAILED_UID_LIST
-                await main_coupon_submit(page, coupon_code)
-                return
-            elif latest_coupon == coupon_code:
+
+            if latest_coupon == coupon_code:
+                # Trying to resubmit failed uid on old coupon aka same coupon
+                if len(FAILED_UID_LIST) > 0:
+                    logging.info(f"Found failed id, trying to submit coupon again.")
+                    UID_LIST[:] = FAILED_UID_LIST
+                    await main_coupon_submit(page, latest_coupon)
+
                 logging.info(f"Coupon Same, Exiting !")
                 return
+            else:
+                # Reset the failed since its new coupon
+                FAILED_UID_LIST[:] = []
+                append_failed_ids([])
         except FileNotFoundError:
             pass
 
@@ -504,9 +514,9 @@ async def couponstance():
             await main_post_discord(coupon_code, coupon_image, coupon_date)
 
         # Update Coupon to Local Coupon file if Different or Not Exist
-        with open('latest_coupon.txt', 'w') as f:
+        with open(COUPON_FILE_PATH, 'w') as f:
             f.write(coupon_code)
         await browser.close()
 
-
-asyncio.run(couponstance())
+if __name__ == "__main__":
+    asyncio.run(couponstance())
