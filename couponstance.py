@@ -52,6 +52,7 @@ from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 
 # Load the .env
 env.read_env()
@@ -260,7 +261,7 @@ async def human_like_delay(min_ms=100, max_ms=500):
 async def submit_coupon(page, uid, coupon_code):
     """Submit coupon for a given UID."""
     logging.info(f"Entrying Coupon for ID: {uid}")
-    await page.goto(IOS_COUPON_URL, wait_until='load')
+    await page.goto(IOS_COUPON_URL, wait_until='domcontentloaded')
 
     # Simulate human-like behavior
     await human_like_delay(500, 1500)
@@ -413,7 +414,7 @@ def send_discord_embed(coupon_code, coupon_image, coupon_date):
 
 
 async def couponstance():
-    async with async_playwright() as p:
+    async with Stealth().use_async(async_playwright()) as p:
 
         if not UID_LIST:
             logging.info("UID Not found")

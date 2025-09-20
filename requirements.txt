@@ -8,5 +8,7 @@ filetype==1.2.0
     # via trickcal-couponstance (pyproject.toml)
 playwright==1.55.0
     # via trickcal-couponstance (pyproject.toml)
+playwright-stealth==2.0.0
+    # via trickcal-couponstance (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via trickcal-couponstance (pyproject.toml)
