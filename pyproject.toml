@@ -7,6 +7,7 @@ dependencies = [
     "discord-webhook>=1.4.1",
     "environs>=14.3.0",
     "filetype>=1.2.0",
+    "loguru>=0.7.3",
     "playwright>=1.55.0",
     "playwright-stealth>=2.0.0",
     "python-dateutil>=2.9.0.post0",

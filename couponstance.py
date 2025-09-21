@@ -39,10 +39,11 @@
 # ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 import asyncio
-import logging
 import os
 import random
 import re
+import sys
+import zipfile
 from datetime import datetime
 from typing import Optional
 
@@ -51,6 +52,7 @@ import requests
 from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
+from loguru import logger as log
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
@@ -60,16 +62,41 @@ env.read_env()
 # Get the directory where the script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Configure logging
+# Configure log
 log_file = os.path.join(script_dir, 'app.log')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
+log.remove()
+log_format = ("<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+              "<level>{level: <8}</level> | "
+              "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
+
+
+# Because I hate they're adding the hh:mm:ss SSS something to the filename
+# And I only need the date they rotate the file itself
+def kuri_zip_compression(file_path):
+    """Simple compression with current date"""
+    directory = os.path.dirname(file_path) or "."
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    zip_filename = os.path.join(directory, f"app.{today}.log.zip")
+
+    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.write(file_path, f"app.{today}.log")
+
+    os.remove(file_path)
+
+
+log.add(sys.stdout,
+        format=log_format,
+        colorize=True,
+        )
+
+log.add(
+    log_file,
+    rotation="sunday",
+    compression=kuri_zip_compression,
+    encoding="utf-8",
+    level="INFO",
+    format=log_format
 )
 
 # 트릭컬 리바이브 URL
@@ -182,10 +209,10 @@ async def extract_coupon_link(page):
     if post_link_elem:
         post_href = await post_link_elem.get_attribute('href')
         full_url = BASE_URL + post_href
-        logging.info(f"Found coupon link: {full_url}")
+        log.info(f"Found coupon link: {full_url}")
         return full_url
     else:
-        logging.info("No coupon link found")
+        log.info("No coupon link found")
         return None
 
 
@@ -202,14 +229,14 @@ async def extract_coupon_code_and_stuff(page, full_url):
     await coupon_label_locator.wait_for()
 
     if not await coupon_label_locator.count():
-        logging.info(f"❌ '{COUPON_HEADER}' not found in any <p>")
+        log.info(f"❌ '{COUPON_HEADER}' not found in any <p>")
         return None
 
     # Step 2: Get the very next <p> sibling (adjacent sibling)
     next_p_locator = coupon_label_locator.locator('xpath=following-sibling::p[1]')
 
     if not await next_p_locator.count():
-        logging.info("❌ No next <p> found")
+        log.info("❌ No next <p> found")
         return None
 
     # Step 3: Extract text from span inside next <p>
@@ -217,16 +244,16 @@ async def extract_coupon_code_and_stuff(page, full_url):
     coupon_code_span_locator = next_p_locator.locator('span').first
 
     if not await coupon_code_span_locator.count():
-        logging.info("❌ No span found in next <p>")
+        log.info("❌ No span found in next <p>")
         return None
 
     coupon_code = await coupon_code_span_locator.text_content()
 
     if coupon_code and coupon_code.strip():
         coupon_code = coupon_code.strip()
-        logging.info(f"✅ Coupon code: {coupon_code}")
+        log.info(f"✅ Coupon code: {coupon_code}")
     else:
-        logging.info("❌ Empty or no span text")
+        log.info("❌ Empty or no span text")
         coupon_code = None
 
     # Coupon Date
@@ -237,14 +264,14 @@ async def extract_coupon_code_and_stuff(page, full_url):
     await coupon_date_locator.wait_for()
 
     if not await coupon_date_locator.count():
-        logging.info(f"❌ '{COUPON_CLAIM_DATE}' not found in any <p>")
+        log.info(f"❌ '{COUPON_CLAIM_DATE}' not found in any <p>")
         return None
 
     # Step 2: Get the very next <p> sibling (adjacent sibling)
     next_p_locator = coupon_date_locator.locator('xpath=following-sibling::p[1]')
 
     if not await next_p_locator.count():
-        logging.info("❌ No next <p> found")
+        log.info("❌ No next <p> found")
         return None
 
     # Step 3: Extract text from span inside next <p>
@@ -252,16 +279,16 @@ async def extract_coupon_code_and_stuff(page, full_url):
     coupon_claim_date_span_locator = next_p_locator.locator('span').first
 
     if not await coupon_claim_date_span_locator.count():
-        logging.info("❌ No span found in next <p>")
+        log.info("❌ No span found in next <p>")
         return None
 
     coupon_date = await coupon_claim_date_span_locator.text_content()
 
     if coupon_date and coupon_date.strip():
         coupon_date = coupon_date.strip()
-        logging.info(f"✅ Coupon claim date: {coupon_date}")
+        log.info(f"✅ Coupon claim date: {coupon_date}")
     else:
-        logging.info("❌ Empty or no span text")
+        log.info("❌ Empty or no span text")
         coupon_date = None
 
     # Coupon Image
@@ -272,13 +299,13 @@ async def extract_coupon_code_and_stuff(page, full_url):
         try:
             coupon_image = await coupon_image_locator.first.get_attribute('src')
             if coupon_image:
-                logging.info(f"✅ Coupon Image found: {coupon_image}")
+                log.info(f"✅ Coupon Image found: {coupon_image}")
             else:
-                logging.info("❌ Image element found but no src attribute")
+                log.info("❌ Image element found but no src attribute")
         except Exception as e:
-            logging.info(f"❌ Error extracting image: {e}")
+            log.info(f"❌ Error extracting image: {e}")
     else:
-        logging.info("❌ No image found with selector 'div[class*=\"e-component-content-fit\"] img'")
+        log.info("❌ No image found with selector 'div[class*=\"e-component-content-fit\"] img'")
 
     # Return both coupon code and image
     if coupon_code:
@@ -298,7 +325,7 @@ async def human_like_delay(min_ms=100, max_ms=500):
 
 async def submit_coupon(page, uid, coupon_code):
     """Submit coupon for a given UID."""
-    logging.info(f"Entrying Coupon for ID: {uid}")
+    log.info(f"Entrying Coupon for ID: {uid}")
     await page.goto(IOS_COUPON_URL, wait_until='domcontentloaded')
 
     # Simulate human-like behavior
@@ -314,7 +341,7 @@ async def submit_coupon(page, uid, coupon_code):
 
     # Get result message
     result = await page.locator('#result-message').text_content()
-    logging.info(f"Result for UID {uid}: {result}")
+    log.info(f"Result for UID {uid}: {result}")
     return result
 
 
@@ -324,19 +351,19 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
         result = await submit_coupon(page, uid, coupon_code)
         if "쿨타임" in result:
             wait_time = (2 ** attempt) * 30  # Exponential backoff: 30s, 60s, 120s
-            logging.info(
+            log.info(
                 f"Cooldown detected for UID {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time} seconds...")
             await human_like_delay(wait_time * 1000, (wait_time + 5) * 1000)
         else:
             return result
-    logging.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
+    log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
     FAILED_UID_LIST.append(uid)
     return result
 
 
 async def main_coupon_submit(page, coupon_code):
     # IOS 쿠폰 입력
-    logging.info(f"Coupon : {coupon_code}")
+    log.info(f"Coupon : {coupon_code}")
     redeemed_uids = []
 
     for UID in UID_LIST:
@@ -345,9 +372,9 @@ async def main_coupon_submit(page, coupon_code):
 
         # Handle already-used coupon
         if COUPON_MESSAGE_ALREADY_USED in result:
-            logging.info(f"Coupon already used for UID: {UID}")
+            log.info(f"Coupon already used for UID: {UID}")
         elif COUPON_MESSAGE_COOLDOWN not in result:
-            logging.info(f"Success or other result for UID {UID}: {result}")
+            log.info(f"Success or other result for UID {UID}: {result}")
 
         # Adding to redeemed uid list
         redeemed_uids.append(UID)
@@ -356,17 +383,17 @@ async def main_coupon_submit(page, coupon_code):
         # Clean up
         await human_like_delay(5000, 10000)  # Delay between UIDs
 
-    logging.info(f"Redeemed or processed UIDs: {redeemed_uids}")
+    log.info(f"Redeemed or processed UIDs: {redeemed_uids}")
     if len(FAILED_UID_LIST) > 0:
         append_failed_ids(FAILED_UID_LIST)
-        logging.info(f"Found failed id writing into file for next run.")
+        log.info(f"Found failed id writing into file for next run.")
     else:
         # If no failed id found
         append_failed_ids([])
 
 
 async def main_post_discord(coupon_code, coupon_image, coupon_date):
-    logging.info(f"Posting to Discord . . .")
+    log.info(f"Posting to Discord . . .")
     send_discord_embed(coupon_code, coupon_image, coupon_date)
 
 
@@ -455,16 +482,16 @@ def send_discord_embed(coupon_code, coupon_image, coupon_date):
     response = webhook.execute()
 
     if response.ok:
-        logging.info("✅ Posting to Discord Done !")
+        log.info("✅ Posting to Discord Done !")
     else:
-        logging.error(f"Failed to send embeds. HTTP Response Code: {response.status_code}")
+        log.error(f"Failed to send embeds. HTTP Response Code: {response.status_code}")
 
 
 async def couponstance():
     async with Stealth().use_async(async_playwright()) as p:
 
         if not UID_LIST:
-            logging.info("UID Not found")
+            log.info("UID Not found")
             return
 
         FAILED_UID_LIST[:] = read_failed_ids()
@@ -494,11 +521,11 @@ async def couponstance():
             if latest_coupon == coupon_code:
                 # Trying to resubmit failed uid on old coupon aka same coupon
                 if len(FAILED_UID_LIST) > 0:
-                    logging.info(f"Found failed id, trying to submit coupon again.")
+                    log.info(f"Found failed id, trying to submit coupon again.")
                     UID_LIST[:] = FAILED_UID_LIST
                     await main_coupon_submit(page, latest_coupon)
 
-                logging.info(f"Coupon Same, Exiting !")
+                log.info(f"Coupon Same, Exiting !")
                 return
             else:
                 # Reset the failed since its new coupon
@@ -517,6 +544,7 @@ async def couponstance():
         with open(COUPON_FILE_PATH, 'w') as f:
             f.write(coupon_code)
         await browser.close()
+
 
 if __name__ == "__main__":
     asyncio.run(couponstance())

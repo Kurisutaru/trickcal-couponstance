@@ -4,6 +4,7 @@
 1. Adding feature to Post Discord Webhook
 2. Adding things to make playwright behavior like real human on top of humanizer script (maybe work, maybe not)
 3. Retry on failed input coupon
+4. Log Rotation every sunday
 
 ## Pre-Changelog
 1. Adding .env and support multiple UID in single run
