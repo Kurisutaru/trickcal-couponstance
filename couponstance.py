@@ -111,7 +111,8 @@ UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
 FAILED_UID_LIST = []
 
 THREAD_COUPON_TITLE = "[쿠폰]"
-COUPON_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
+COUPON_CLAIM_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
+COUPON_CLAIM_REWARD = "쿠폰 보상"
 COUPON_CLAIM_DATE = "사용 기한"
 COUPON_MESSAGE_COOLDOWN = "쿠폰 입력 쿨타임 중입니다.잠시 후 다시 이용해주세요."
 COUPON_MESSAGE_ALREADY_USED = "이미 사용된 쿠폰입니다."
@@ -187,12 +188,14 @@ def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str
     now = datetime.now(tz=tz.gettz(tz_src))
     year = now.year + (month < now.month)
 
+    # Instead different format if there's no time, just assume its now
+    if hour == 0 and minute == 0:
+        hour = now.hour
+        minute = now.minute
+
     local_dt = datetime(year, month, day, hour, minute, tzinfo=tz.gettz(tz_src))
     utc_dt = local_dt.astimezone(tz.UTC)
-    if hour == 0 and minute == 0:
-        return f"<t:{int(utc_dt.timestamp())}:D>"
-    else:
-        return f"<t:{int(utc_dt.timestamp())}:f>"
+    return f"<t:{int(utc_dt.timestamp())}:f>"
 
 
 # Get the link
@@ -216,80 +219,54 @@ async def extract_coupon_link(page):
         return None
 
 
+async def get_sibling_text(page, target_text) -> Optional[str]:
+    # Step 1: Find the <p> that has a <span> containing target_text and get its next sibling
+    locator = page.locator('p').filter(has_text=target_text).first
+
+    # Ensure the coupon label element is actually found before proceeding
+    await locator.wait_for()
+
+    if not await locator.count():
+        log.info(f"❌ '{target_text}' not found in any <p>")
+        return None
+
+    # Step 2: Get the very next <p> sibling (adjacent sibling)
+    next_p_locator = locator.locator('xpath=following-sibling::p[1]')
+
+    if not await next_p_locator.count():
+        log.info("❌ No next <p> found")
+        return None
+
+    # Step 3: Extract text from span inside next <p>
+    # Instead of evaluate, use locator to find span and get text
+    span_inside_p = next_p_locator.locator('span').first
+
+    if not await span_inside_p.count():
+        log.info("❌ No span found in next <p>")
+        return None
+
+    span_text = await span_inside_p.text_content()
+
+    if span_text:
+        span_text = span_text.strip()
+    else:
+        log.info("❌ Empty or no span text")
+        span_text = None
+
+    return span_text
+
+
 # Assuming you're already on the target page
 async def extract_coupon_code_and_stuff(page, full_url):
     # Load page
     await page.goto(full_url, wait_until='load')
 
     # Coupon Code
-    # Step 1: Find the <p> that has a <span> containing "쿠폰 코드" and get its next sibling
-    coupon_label_locator = page.locator('p').filter(has_text=COUPON_HEADER).first
-
-    # Ensure the coupon label element is actually found before proceeding
-    await coupon_label_locator.wait_for()
-
-    if not await coupon_label_locator.count():
-        log.info(f"❌ '{COUPON_HEADER}' not found in any <p>")
-        return None
-
-    # Step 2: Get the very next <p> sibling (adjacent sibling)
-    next_p_locator = coupon_label_locator.locator('xpath=following-sibling::p[1]')
-
-    if not await next_p_locator.count():
-        log.info("❌ No next <p> found")
-        return None
-
-    # Step 3: Extract text from span inside next <p>
-    # Instead of evaluate, use locator to find span and get text
-    coupon_code_span_locator = next_p_locator.locator('span').first
-
-    if not await coupon_code_span_locator.count():
-        log.info("❌ No span found in next <p>")
-        return None
-
-    coupon_code = await coupon_code_span_locator.text_content()
-
-    if coupon_code and coupon_code.strip():
-        coupon_code = coupon_code.strip()
-        log.info(f"✅ Coupon code: {coupon_code}")
-    else:
-        log.info("❌ Empty or no span text")
-        coupon_code = None
-
+    coupon_code = await get_sibling_text(page, COUPON_CLAIM_HEADER)
     # Coupon Date
-    # Step 1: Find the <p> that has a <span> containing "사용 기한" and get its next sibling
-    coupon_date_locator = page.locator('p').filter(has_text=COUPON_CLAIM_DATE).first
-
-    # Ensure the coupon label element is actually found before proceeding
-    await coupon_date_locator.wait_for()
-
-    if not await coupon_date_locator.count():
-        log.info(f"❌ '{COUPON_CLAIM_DATE}' not found in any <p>")
-        return None
-
-    # Step 2: Get the very next <p> sibling (adjacent sibling)
-    next_p_locator = coupon_date_locator.locator('xpath=following-sibling::p[1]')
-
-    if not await next_p_locator.count():
-        log.info("❌ No next <p> found")
-        return None
-
-    # Step 3: Extract text from span inside next <p>
-    # Instead of evaluate, use locator to find span and get text
-    coupon_claim_date_span_locator = next_p_locator.locator('span').first
-
-    if not await coupon_claim_date_span_locator.count():
-        log.info("❌ No span found in next <p>")
-        return None
-
-    coupon_date = await coupon_claim_date_span_locator.text_content()
-
-    if coupon_date and coupon_date.strip():
-        coupon_date = coupon_date.strip()
-        log.info(f"✅ Coupon claim date: {coupon_date}")
-    else:
-        log.info("❌ Empty or no span text")
-        coupon_date = None
+    coupon_reward = await get_sibling_text(page, COUPON_CLAIM_REWARD)
+    # Coupon Date
+    coupon_date = await get_sibling_text(page, COUPON_CLAIM_DATE)
 
     # Coupon Image
     coupon_image_locator = page.locator('div[class*="e-component-content-fit"] img')
@@ -311,6 +288,7 @@ async def extract_coupon_code_and_stuff(page, full_url):
     if coupon_code:
         return {
             'coupon_code': coupon_code,
+            'coupon_reward': coupon_reward,
             'coupon_date': coupon_date,
             'coupon_image': coupon_image
         }
@@ -392,9 +370,9 @@ async def main_coupon_submit(page, coupon_code):
         append_failed_ids([])
 
 
-async def main_post_discord(coupon_code, coupon_image, coupon_date):
+async def main_post_discord(coupon_code, coupon_reward, coupon_date, coupon_image):
     log.info(f"Posting to Discord . . .")
-    send_discord_embed(coupon_code, coupon_image, coupon_date)
+    send_discord_embed(coupon_code, coupon_reward, coupon_date, coupon_image)
 
 
 def get_random_hex_color():
@@ -452,7 +430,7 @@ def detect_extension(url: str, sample_bytes: int = 512) -> Optional[str]:
     return kind.extension if kind else None
 
 
-def send_discord_embed(coupon_code, coupon_image, coupon_date):
+def send_discord_embed(coupon_code:str, coupon_reward:str, coupon_date:str, coupon_image:str):
     local_filename = f"{coupon_code}.{detect_extension(coupon_image)}"
 
     split_coupon_date = coupon_date.split('~')
@@ -470,8 +448,9 @@ def send_discord_embed(coupon_code, coupon_image, coupon_date):
                      icon_url="https://i.imgur.com/eTEpq7I.png")
 
     embed.add_embed_field(name="Coupon Code", value=f"```{coupon_code}```", inline=False)
-    embed.add_embed_field(name="Coupon Claim", value=f"[Ingame or click here]({IOS_COUPON_URL})", inline=False)
+    embed.add_embed_field(name="Coupon Reward", value=f"```{coupon_reward}```", inline=False)
     embed.add_embed_field(name="Coupon Claim Period", value=embed_claim_date, inline=False)
+    embed.add_embed_field(name="Coupon Claim Method", value=f"[Ingame or Click Here]({IOS_COUPON_URL})", inline=False)
     embed.set_footer(text="ERPINI COUPON POSTER powered by 🍬🍭🍰🥖", icon_url="https://i.imgur.com/eTEpq7I.png")
 
     with requests.get(coupon_image, stream=True) as r:
@@ -510,8 +489,9 @@ async def couponstance():
         if not result:
             return
         coupon_code = result.get('coupon_code')
-        coupon_image = result.get('coupon_image')
+        coupon_reward = result.get('coupon_reward')
         coupon_date = result.get('coupon_date')
+        coupon_image = result.get('coupon_image')
 
         # Adding Local Coupon version checker
         try:
@@ -538,7 +518,7 @@ async def couponstance():
             await main_coupon_submit(page, coupon_code)
 
         if POST_DISCORD and DISCORD_WEBHOOK_URL:
-            await main_post_discord(coupon_code, coupon_image, coupon_date)
+            await main_post_discord(coupon_code, coupon_reward, coupon_date, coupon_image)
 
         # Update Coupon to Local Coupon file if Different or Not Exist
         with open(COUPON_FILE_PATH, 'w') as f:

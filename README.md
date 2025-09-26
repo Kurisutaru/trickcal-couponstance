@@ -27,6 +27,6 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 ### And run as usual
-```python
+```bash
 python couponstance.py
 ```
