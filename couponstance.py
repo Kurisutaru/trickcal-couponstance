@@ -49,6 +49,7 @@ from typing import Optional
 
 import filetype
 import requests
+import unicodedata
 from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
@@ -110,7 +111,7 @@ UID_LIST = env.list("TRICKAL_UID")
 UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
 FAILED_UID_LIST = []
 
-THREAD_COUPON_TITLE = "[쿠폰]"
+THREAD_COUPON_TITLE = "쿠폰"
 COUPON_CLAIM_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
 COUPON_CLAIM_REWARD = "쿠폰 보상"
 COUPON_CLAIM_DATE = "사용 기한"
@@ -127,38 +128,50 @@ DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 COUPON_FILE_NAME = "latest_coupon.txt"
 COUPON_FILE_PATH = os.path.join(script_dir, COUPON_FILE_NAME)
 
+# Past Name File
+PAST_COUPON_FILE_NAME = "past_coupon.txt"
+PAST_COUPON_FILE_PATH = os.path.join(script_dir, PAST_COUPON_FILE_NAME)
+
 # Failed Name File
 FAILED_FILE_NAME = "failed_id.txt"
 FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 
 
-# For failed / retry UID Read Write Utils
-def read_failed_ids() -> list[str]:
-    """
-    Return the list of previously‑failed UIDs stored in `filename`.
-    If the file does not exist, an empty list is returned.
-    """
+def load_line_from_file(path: str) -> str:
     try:
-        with open(FAILED_FILE_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def load_lines_from_file(path: str) -> list[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
             return [line.rstrip() for line in f if line.strip()]
     except FileNotFoundError:
         return []
 
 
-def append_failed_id(uid: str) -> None:
-    """
-    Append a single UID to `filename`.  The line is terminated with a
-    newline so that successive cron jobs can read the file back later.
-    """
-    # 'ab' would force binary mode; use text mode so we get proper \n.
-    with open(FAILED_FILE_PATH, "a", encoding="utf-8") as f:
-        f.write(f"{uid}\n")
+def append_line_to_file(text: str, path: str) -> None:
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"{text}\n")
 
 
-def append_failed_ids(uids: list[str]) -> None:
-    """Append *each* UID in `uids` to `filename`, one per line."""
-    with open(FAILED_FILE_PATH, "w", encoding="utf-8") as f:
-        f.writelines(f"{uid}\n" for uid in uids)
+def write_line_to_file(text: str, path: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"{text}\n")
+
+
+def write_lines_to_file(texts: list[str], path: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(f"{item}\n" for item in texts)
+
+
+# Naver post using \c002b or something for Zero Width Blank Space, this utils remove all of them
+def strip_invisible(s: str) -> str:
+    return ''.join(ch for ch in s
+                   if unicodedata.category(ch)[0] not in ('C',))  # C* → control + format
 
 
 # Format following Trickcal Naver post
@@ -201,17 +214,27 @@ def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str
 # Get the link
 async def extract_coupon_link(page):
     # Navigate to the coupon board
-    await page.goto(COUPON_NOTICE_BOARD_URL, wait_until='load')
+    await page.goto(COUPON_NOTICE_BOARD_URL, wait_until='domcontentloaded')
 
-    # Wait for content to load (adjust selector as needed)
-    await page.wait_for_selector('a[class*="post_board_title"]', state='visible')
+    # Wait for the elements to be present and visible
+    # await page.wait_for_selector('a[class*="post_board_title"]')
 
-    # Query for <a> tag with class containing "post_board_title" AND text containing "[쿠폰]"
-    post_link_elem = await page.query_selector(f'a[class*="post_board_title"]:has-text("{THREAD_COUPON_TITLE}")')
+    # 1️⃣ Grab all “post_board_title” links on the page
+    locator = page.locator(
+        'a[class*="post_board_title"]',
+        has_text=THREAD_COUPON_TITLE,
+    )
 
-    if post_link_elem:
-        post_href = await post_link_elem.get_attribute('href')
-        full_url = BASE_URL + post_href
+    # Wait for all elements to be present and visible
+    await locator.first.wait_for(state='visible')  # Increased timeout for dynamic content
+
+    elements = await locator.all()
+
+    # Extract href attributes into a list, Remove none, and remove duplicate
+    hrefs = sorted({await e.get_attribute('href') for e in elements} - {None}, reverse=True)
+
+    if hrefs[0]:
+        full_url = BASE_URL + hrefs[0]
         log.info(f"Found coupon link: {full_url}")
         return full_url
     else:
@@ -230,36 +253,45 @@ async def get_sibling_text(page, target_text) -> Optional[str]:
         log.info(f"❌ '{target_text}' not found in any <p>")
         return None
 
-    # Step 2: Get the very next <p> sibling (adjacent sibling)
-    next_p_locator = locator.locator('xpath=following-sibling::p[1]')
+    # Looping engine from get the element of text target, loop until it show empty text then exit
+    # Not sure if this the best way tho, since any change on their post format it need to be updated
+    result = []
+    loop = True
+    sibling_count = 1
 
-    if not await next_p_locator.count():
-        log.info("❌ No next <p> found")
-        return None
+    while loop:
+        # Step 2: Get the very next <p> sibling (adjacent sibling)
+        next_p_locator = locator.locator(f"xpath=following-sibling::p[{sibling_count}]")
 
-    # Step 3: Extract text from span inside next <p>
-    # Instead of evaluate, use locator to find span and get text
-    span_inside_p = next_p_locator.locator('span').first
+        if not await next_p_locator.count():
+            log.info("❌ No next <p> found")
+            return None
 
-    if not await span_inside_p.count():
-        log.info("❌ No span found in next <p>")
-        return None
+        # Step 3: Extract text from span inside next <p>
+        # Instead of evaluate, use locator to find span and get text
+        span_inside_p = next_p_locator.locator('span').first
 
-    span_text = await span_inside_p.text_content()
+        if not await span_inside_p.count():
+            log.info("❌ No span found in next <p>")
+            return None
 
-    if span_text:
-        span_text = span_text.strip()
-    else:
-        log.info("❌ Empty or no span text")
-        span_text = None
+        span_text = await span_inside_p.text_content()
+        span_text = strip_invisible(span_text.strip())
 
-    return span_text
+        if span_text and span_text != "":
+            result.append(span_text)
+            sibling_count += 1
+        else:
+            loop = False
+            # log.info("❌ Empty or no span text or empty content")
+
+    return '\n'.join(result)
 
 
 # Assuming you're already on the target page
 async def extract_coupon_code_and_stuff(page, full_url):
     # Load page
-    await page.goto(full_url, wait_until='load')
+    await page.goto(full_url, wait_until='domcontentloaded')
 
     # Coupon Code
     coupon_code = await get_sibling_text(page, COUPON_CLAIM_HEADER)
@@ -363,11 +395,11 @@ async def main_coupon_submit(page, coupon_code):
 
     log.info(f"Redeemed or processed UIDs: {redeemed_uids}")
     if len(FAILED_UID_LIST) > 0:
-        append_failed_ids(FAILED_UID_LIST)
+        write_lines_to_file(FAILED_UID_LIST, FAILED_FILE_PATH)
         log.info(f"Found failed id writing into file for next run.")
     else:
         # If no failed id found
-        append_failed_ids([])
+        write_lines_to_file([], FAILED_FILE_PATH)
 
 
 async def main_post_discord(coupon_code, coupon_reward, coupon_date, coupon_image):
@@ -430,7 +462,7 @@ def detect_extension(url: str, sample_bytes: int = 512) -> Optional[str]:
     return kind.extension if kind else None
 
 
-def send_discord_embed(coupon_code:str, coupon_reward:str, coupon_date:str, coupon_image:str):
+def send_discord_embed(coupon_code: str, coupon_reward: str, coupon_date: str, coupon_image: str):
     local_filename = f"{coupon_code}.{detect_extension(coupon_image)}"
 
     split_coupon_date = coupon_date.split('~')
@@ -473,7 +505,7 @@ async def couponstance():
             log.info("UID Not found")
             return
 
-        FAILED_UID_LIST[:] = read_failed_ids()
+        FAILED_UID_LIST[:] = load_lines_from_file(FAILED_FILE_PATH)
 
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
@@ -495,8 +527,7 @@ async def couponstance():
 
         # Adding Local Coupon version checker
         try:
-            with open(COUPON_FILE_PATH, 'r') as f:
-                latest_coupon = f.read().strip()
+            latest_coupon = load_line_from_file(COUPON_FILE_PATH)
 
             if latest_coupon == coupon_code:
                 # Trying to resubmit failed uid on old coupon aka same coupon
@@ -510,9 +541,17 @@ async def couponstance():
             else:
                 # Reset the failed since its new coupon
                 FAILED_UID_LIST[:] = []
-                append_failed_ids([])
+                write_lines_to_file([], FAILED_FILE_PATH)
         except FileNotFoundError:
             pass
+
+        # Check Past Coupon, Prevent the coupon getter URL were shifted
+        past_coupon = load_lines_from_file(PAST_COUPON_FILE_PATH)
+
+        if coupon_code in past_coupon:
+            log.info(f"Past Coupon Detected, Exiting !")
+            write_line_to_file(coupon_code, COUPON_FILE_PATH)
+            return
 
         if POST_COUPON:
             await main_coupon_submit(page, coupon_code)
@@ -521,9 +560,9 @@ async def couponstance():
             await main_post_discord(coupon_code, coupon_reward, coupon_date, coupon_image)
 
         # Update Coupon to Local Coupon file if Different or Not Exist
-        with open(COUPON_FILE_PATH, 'w') as f:
-            f.write(coupon_code)
-        await browser.close()
+        # Also append into Past Coupon list
+        write_line_to_file(coupon_code, COUPON_FILE_PATH)
+        append_line_to_file(coupon_code, PAST_COUPON_FILE_PATH)
 
 
 if __name__ == "__main__":

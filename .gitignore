@@ -1,4 +1,5 @@
 *.log
 *.zip
 latest_coupon.txt
+past_coupon.txt
 failed_id.txt
