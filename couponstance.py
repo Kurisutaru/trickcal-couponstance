@@ -54,7 +54,7 @@ from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from loguru import logger as log
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, ViewportSize
 from playwright_stealth import Stealth
 
 # Load the .env
@@ -511,8 +511,23 @@ async def couponstance():
 
         FAILED_UID_LIST[:] = load_lines_from_file(FAILED_FILE_PATH)
 
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
+        browser = await p.chromium.launch(headless=True,
+                                          args=[
+                                              '--disable-gpu',                    # No GPU needed
+                                              '--disable-dev-shm-usage',          # Fix Docker shared memory
+                                              '--disable-setuid-sandbox',         # Docker compatibility
+                                              '--no-sandbox',                     # Reduce overhead
+                                              '--disable-features=IsolateOrigins,site-per-process',  # Reduce memory
+                                              '--disable-blink-features=AutomationControlled',  # Anti-detection
+                                          ])
+        context = await browser.new_context(
+            viewport=ViewportSize(width=1280, height=720),
+            locale='ko-KR',  # Korean locale for Naver
+        )
+
+        await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,ico}", lambda route: route.abort())
+        await context.route("**/*.{woff,woff2,ttf,otf}", lambda r: r.abort())
+
         page = await context.new_page()
 
         # Get the Coupon Page URL
