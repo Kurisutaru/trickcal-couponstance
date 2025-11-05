@@ -45,12 +45,15 @@ import random
 import re
 import sys
 import zipfile
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Optional, Dict, Any, List
 
 import aiofiles
 import filetype
 import httpx
+import orjson
 import unicodedata
 from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
@@ -406,120 +409,182 @@ class CircuitBreaker:
 api_breaker = CircuitBreaker(failure_threshold=3, timeout=300)  # 5 min
 coupon_breaker = CircuitBreaker(failure_threshold=5, timeout=180)  # 3 min
 
+# --------------------------------------------------------------
+# Block model (same as before, but tiny)
+# --------------------------------------------------------------
+class BlockType(Enum):
+    IMAGE = "image"
+    TEXT  = "text"
+
+@dataclass
+class Block:
+    type: BlockType
+    content: str
+    is_empty: bool = False          # only for TEXT blocks
+
+# --------------------------------------------------------------
+# 1. Un-escape + walk the WYSIWYG document
+# --------------------------------------------------------------
+def _parse_document(raw_escaped_json: str) -> List[Block]:
+    """Turn the escaped JSON string into an ordered list of Block objects."""
+    doc = orjson.loads(raw_escaped_json)
+    blocks: List[Block] = []
+
+    for comp in doc["document"]["components"]:
+        ctype = comp.get("@ctype")
+
+        # ---- IMAGE -------------------------------------------------
+        if ctype == "image":
+            blocks.append(Block(BlockType.IMAGE, comp["src"]))
+            continue
+
+        # ---- TEXT --------------------------------------------------
+        if ctype != "text":
+            continue
+
+        for para in comp.get("value", []):
+            parts: List[str] = []
+            for node in para.get("nodes", []):
+                if node.get("@ctype") != "textNode":
+                    continue
+                parts.append(node.get("value", ""))
+
+            full = "".join(parts)
+            empty = not full.strip() or full.strip() == "\u200b"
+            blocks.append(Block(BlockType.TEXT, full, is_empty=empty))
+
+    return blocks
+
+# --------------------------------------------------------------
+# 2. CouponInfo – what we finally return
+# --------------------------------------------------------------
+@dataclass
+class CouponInfo:
+    code: Optional[str] = None
+    rewards: List[str] = field(default_factory=list)
+    expiration: Optional[str] = None
+    image: Optional[str] = None      # image **right before** the header
+
+# --------------------------------------------------------------
+# 3. Extract semantics from the ordered blocks
+# --------------------------------------------------------------
+def _extract_coupon(blocks: List[Block]) -> CouponInfo:
+    info = CouponInfo()
+    i = 0
+    n = len(blocks)
+
+    while i < n:
+        b = blocks[i]
+
+        # ---- look for the header ------------------------------------------------
+        if (b.type == BlockType.TEXT and not b.is_empty
+                and COUPON_CLAIM_HEADER in b.content):
+
+            # 1. image *immediately before* the header
+            for j in range(i - 1, -1, -1):
+                prev = blocks[j]
+                if prev.type == BlockType.IMAGE:
+                    info.image = prev.content
+                    break
+                if not prev.is_empty:          # stop at any real text
+                    break
+
+            # 2. coupon code – next non-empty text block
+            for j in range(i + 1, n):
+                nxt = blocks[j]
+                if nxt.type == BlockType.TEXT and not nxt.is_empty:
+                    info.code = nxt.content.strip()
+                    break
+                if nxt.type == BlockType.IMAGE:
+                    break
+
+            # 3. rewards – start after “쿠폰 보상” until blank line or next section
+            reward_start = None
+            for j in range(i + 1, n):
+                if (blocks[j].type == BlockType.TEXT
+                        and not blocks[j].is_empty
+                        and COUPON_CLAIM_REWARD in blocks[j].content):
+                    reward_start = j + 1
+                    break
+
+            if reward_start is not None:
+                for j in range(reward_start, n):
+                    rb = blocks[j]
+                    if rb.type == BlockType.TEXT:
+                        if rb.is_empty:
+                            break
+                        if any(h in rb.content for h in (COUPON_CLAIM_HEADER,
+                                                         COUPON_CLAIM_DATE)):
+                            break
+                        if rb.content.strip().startswith("-"):
+                            info.rewards.append(rb.content.strip())
+                    elif rb.type == BlockType.IMAGE:
+                        break
+
+            # 4. expiration – after “사용 기한”
+            for j in range(i + 1, n):
+                db = blocks[j]
+                if (db.type == BlockType.TEXT
+                        and not db.is_empty
+                        and COUPON_CLAIM_DATE in db.content):
+                    for k in range(j + 1, n):
+                        date_b = blocks[k]
+                        if date_b.type == BlockType.TEXT and not date_b.is_empty:
+                            info.expiration = date_b.content.strip()
+                            break
+                    break
+            break   # assume only one coupon per post
+
+        i += 1
+
+    return info
 
 # ============================================================================
-# API FUNCTIONS (httpx async)
+# Process the feed
 # ============================================================================
 def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, str]]:
-    """Parse JSON feed structure"""
+    """
+    New implementation – uses orjson + ordered blocks.
+    Returns the same dict shape your script expects.
+    """
     post_list = feed_data.get("content", {}).get("feeds", [])
     if not post_list:
         log.info("No feeds")
         return None
 
     post = post_list[0]["feed"]
-    subject = post.get("title", "")
-    if THREAD_COUPON_TITLE not in subject:
-        log.info(f"Skip: {subject}")
+    if THREAD_COUPON_TITLE not in post.get("title", ""):
+        log.info(f"Skip: {post.get('title')}")
         return None
 
-    raw_contents = post.get("contents", "")
-    if not raw_contents:
+    raw = post.get("contents", "")
+    if not raw:
         log.info("Empty contents")
         return None
 
+    # ---- parse -------------------------------------------------
     try:
-        doc = json.loads(raw_contents)
-    except json.JSONDecodeError as e:
-        log.error(f"JSON parse error: {e}")
+        blocks = _parse_document(raw)
+    except Exception as e:
+        log.error(f"Failed to parse document: {e}")
         return None
 
-    components = doc.get("document", {}).get("components", [])
-    if not components:
-        log.info("No components")
-        return None
+    info = _extract_coupon(blocks)
 
-    # Extract paragraphs
-    all_paragraphs = []
-    for comp in components:
-        if comp.get("@ctype") == "text":
-            for para in comp.get("value", []):
-                para_text = _clean(_extract_text_from_nodes(para.get("nodes", [])))
-                all_paragraphs.append(para_text)
-
-    if not all_paragraphs:
-        log.info("No paragraphs")
-        return None
-
-    # Find coupon code
-    coupon_code = None
-    for i, para in enumerate(all_paragraphs):
-        if COUPON_CLAIM_HEADER in para:
-            for j in range(i + 1, min(i + 3, len(all_paragraphs))):
-                next_para = all_paragraphs[j].strip()
-                if next_para and len(next_para) <= 20 and not next_para.startswith(("-", "◈", "♥")):
-                    coupon_code = next_para
-                    break
-            break
-
-    # Find rewards
-    reward_lines = []
-    reward_start = False
-    for para in all_paragraphs:
-        if COUPON_CLAIM_REWARD in para:
-            reward_start = True
-            continue
-        if reward_start:
-            para_stripped = para.strip()
-            if para_stripped.startswith("-") and not any(h in para for h in (COUPON_CLAIM_HEADER, COUPON_CLAIM_DATE)):
-                reward_lines.append(para_stripped)
-            elif any(h in para for h in (COUPON_CLAIM_DATE, COUPON_CLAIM_HEADER)):
-                break
-
-    # Find date
-    coupon_date = ""
-    date_start = False
-    for para in all_paragraphs:
-        if COUPON_CLAIM_DATE in para:
-            date_start = True
-            continue
-        if date_start:
-            if "월" in para and "일" in para and para.strip().startswith("-"):
-                coupon_date = para.strip()
-                break
-            elif any(h in para for h in (COUPON_CLAIM_HEADER, COUPON_CLAIM_REWARD)):
-                break
-
-    # Find image
-    coupon_image = None
-    header_found = False
-    for comp in components:
-        if header_found:
-            break
-        if comp.get("@ctype") == "image":
-            src = comp.get("src")
-            if src and src.startswith("http"):
-                coupon_image = src
-        elif comp.get("@ctype") == "text":
-            for para in comp.get("value", []):
-                para_text = _extract_text_from_nodes(para.get("nodes", []))
-                if COUPON_CLAIM_HEADER in para_text:
-                    header_found = True
-                    break
-
-    if not coupon_image:
-        coupon_image = post.get("repImageUrl")
-
-    if not coupon_code:
+    if not info.code:
         log.info("No coupon code found")
         return None
 
-    log.info(f"Extracted: {coupon_code}")
+    # fallback image if we didn’t find one right before the header
+    if not info.image:
+        info.image = post.get("repImageUrl")
+
+    log.info(f"Extracted coupon: {info.code}")
     return {
-        "coupon_code": coupon_code,
-        "coupon_reward": "\n".join(reward_lines),
-        "coupon_date": coupon_date,
-        "coupon_image": coupon_image,
+        "coupon_code": info.code,
+        "coupon_reward": "\n".join(info.rewards),
+        "coupon_date": info.expiration or "",
+        "coupon_image": info.image,
     }
 
 

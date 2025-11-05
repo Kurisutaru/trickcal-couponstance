@@ -10,6 +10,7 @@ dependencies = [
     "filetype>=1.2.0",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
+    "orjson>=3.11.4",
     "playwright>=1.55.0",
     "playwright-stealth>=2.0.0",
     "python-dateutil>=2.9.0.post0",
