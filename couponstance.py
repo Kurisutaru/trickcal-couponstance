@@ -39,16 +39,18 @@
 # ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 import asyncio
+import json
 import os
 import random
 import re
 import sys
 import zipfile
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
 
+import aiofiles
 import filetype
-import requests
+import httpx
 import unicodedata
 from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
@@ -71,8 +73,6 @@ log_format = ("<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>")
 
 
-# Because I hate they're adding the hh:mm:ss SSS something to the filename
-# And I only need the date they rotate the file itself
 def kuri_zip_compression(file_path):
     """Simple compression with current date"""
     directory = os.path.dirname(file_path) or "."
@@ -90,11 +90,7 @@ def kuri_zip_compression(file_path):
     os.remove(file_path)
 
 
-log.add(sys.stdout,
-        format=log_format,
-        colorize=True,
-        )
-
+log.add(sys.stdout, format=log_format, colorize=True)
 log.add(
     log_file,
     rotation="sunday",
@@ -104,13 +100,10 @@ log.add(
     format=log_format
 )
 
-# 트릭컬 리바이브 URL
+# Constants
 BASE_URL = 'https://game.naver.com'
-# 쿠폰 게시판 URL
 COUPON_NOTICE_BOARD_URL = 'https://game.naver.com/lounge/Trickcal/board/31'
-# IOS 쿠폰 입력 페이지
 IOS_COUPON_URL = 'https://coupon.a.prod.service.trickcal.io/'
-# UID
 UID_LIST = env.list("TRICKAL_UID")
 UID_LIST = [uid.strip() for uid in UID_LIST if uid.strip()]
 FAILED_UID_LIST = []
@@ -123,97 +116,26 @@ COUPON_MESSAGE_COOLDOWN = "쿠폰 입력 쿨타임 중입니다.잠시 후 다�
 COUPON_MESSAGE_ALREADY_USED = "이미 사용된 쿠폰입니다."
 MAX_RETRIES = 5
 
-# Config loader
+# Config
 POST_COUPON = env.bool("POST_COUPON")
 POST_DISCORD = env.bool("POST_DISCORD")
 DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 
-# Coupon Name File
+# File paths
 COUPON_FILE_NAME = "latest_coupon.txt"
 COUPON_FILE_PATH = os.path.join(script_dir, COUPON_FILE_NAME)
-
-# Past Name File
 PAST_COUPON_FILE_NAME = "past_coupon.txt"
 PAST_COUPON_FILE_PATH = os.path.join(script_dir, PAST_COUPON_FILE_NAME)
-
-# Failed Name File
 FAILED_FILE_NAME = "failed_id.txt"
 FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 
+# API Cache
+_api_cache = {"data": None, "timestamp": None}
+CACHE_TTL = timedelta(minutes=5)
 
-def load_line_from_file(path: str) -> str:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return ""
-
-
-def load_lines_from_file(path: str) -> list[str]:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return [line.rstrip() for line in f if line.strip()]
-    except FileNotFoundError:
-        return []
-
-
-def append_line_to_file(text: str, path: str) -> None:
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(f"{text}\n")
-
-
-def write_line_to_file(text: str, path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(f"{text}\n")
-
-
-def write_lines_to_file(texts: list[str], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(f"{item}\n" for item in texts)
-
-
-# Naver post using \c002b or something for Zero Width Blank Space, this utils remove all of them
-def strip_invisible(s: str) -> str:
-    return ''.join(ch for ch in s
-                   if unicodedata.category(ch)[0] not in ('C',))  # C* → control + format
-
-
-# Format following Trickcal Naver post
-def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str:
-    """
-    Convert "7월 28일 18:00" or "9월 9일" into a UTC epoch.
-    If hour:minute is missing it becomes 00:00.
-    """
-    # Regex: month/day, optional hour:minute
-    _regex = re.compile(
-        r'(?P<month>\d+)월\s+'
-        r'(?P<day>\d+)일'
-        r'(?:\s+(?P<hour>\d{1,2}):(?P<minute>\d{2}))?'  # optional
-    )
-    m = _regex.search(korean)
-    if not m:
-        now = datetime.now(tz=tz.gettz(tz_src))
-        utc_now = now.astimezone(tz.UTC)
-        return f"<t:{int(utc_now.timestamp())}:f>"
-
-    month = int(m.group('month'))
-    day = int(m.group('day'))
-    hour = int(m.group('hour')) if m.group('hour') else 0
-    minute = int(m.group('minute')) if m.group('minute') else 0
-
-    # Guess the correct year – roll over to next year if month < current month
-    now = datetime.now(tz=tz.gettz(tz_src))
-    year = now.year + (month < now.month)
-
-    # Instead different format if there's no time, just assume its now
-    if hour == 0 and minute == 0:
-        hour = now.hour
-        minute = now.minute
-
-    local_dt = datetime(year, month, day, hour, minute, tzinfo=tz.gettz(tz_src))
-    utc_dt = local_dt.astimezone(tz.UTC)
-    return f"<t:{int(utc_dt.timestamp())}:f>"
-
+# ============================================================================
+# Playwright version of scraping content
+# ============================================================================
 
 # Get the link
 async def extract_coupon_link(page):
@@ -331,151 +253,370 @@ async def extract_coupon_code_and_stuff(page, full_url):
     else:
         return None
 
-
-async def human_like_delay(min_ms=100, max_ms=500):
-    """Add a random delay to mimic human behavior."""
-    await asyncio.sleep(random.uniform(min_ms / 1000, max_ms / 1000))
-
-
-async def submit_coupon(page, uid, coupon_code):
-    """Submit coupon for a given UID."""
-    log.info(f"Entrying Coupon for ID: {uid}")
-    await page.goto(IOS_COUPON_URL, wait_until='domcontentloaded')
-
-    # Simulate human-like behavior
-    await human_like_delay(500, 1500)
-    await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-    await page.locator('#UserId').type(uid, delay=random.randint(50, 150))
-    await human_like_delay(300, 1000)
-    await page.locator('#CouponCode').type(coupon_code, delay=random.randint(50, 150))
-
-    await human_like_delay(500, 1500)
-    await page.click('button[onclick="CouponSubmit()"]')
-    await human_like_delay(1000, 3000)
-
-    # Get result message
-    result = await page.locator('#result-message').text_content()
-    log.info(f"Result for UID {uid}: {result}")
-    return result
+# ============================================================================
+# ASYNC FILE I/O (aiofiles)
+# ============================================================================
+async def load_line_from_file_async(path: str) -> str:
+    """Async version - non-blocking file read"""
+    try:
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            content = await f.read()
+            return content.strip()
+    except FileNotFoundError:
+        return ""
 
 
-async def submit_coupon_with_retry(page, uid, coupon_code):
-    """Submit coupon with retry logic for cooldown."""
-    for attempt in range(MAX_RETRIES):
-        result = await submit_coupon(page, uid, coupon_code)
-        if "쿨타임" in result:
-            wait_time = (2 ** attempt) * 30  # Exponential backoff: 30s, 60s, 120s
-            log.info(
-                f"Cooldown detected for UID {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time} seconds...")
-            await human_like_delay(wait_time * 1000, (wait_time + 5) * 1000)
-        else:
+async def load_lines_from_file_async(path: str) -> List[str]:
+    """Async version - non-blocking file read"""
+    try:
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            lines = await f.readlines()
+            return [line.rstrip() for line in lines if line.strip()]
+    except FileNotFoundError:
+        return []
+
+
+async def append_line_to_file_async(text: str, path: str) -> None:
+    """Async version - non-blocking file append"""
+    async with aiofiles.open(path, "a", encoding="utf-8") as f:
+        await f.write(f"{text}\n")
+
+
+async def write_line_to_file_async(text: str, path: str) -> None:
+    """Async version - non-blocking file write"""
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write(f"{text}\n")
+
+
+async def write_lines_to_file_async(texts: List[str], path: str) -> None:
+    """Async version - non-blocking file write"""
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.writelines(f"{item}\n" for item in texts)
+
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+def _clean(s: str) -> str:
+    """Remove control characters"""
+    return "".join(ch for ch in s if unicodedata.category(ch)[0] not in ("C",))
+
+
+def _extract_text_from_nodes(nodes: List[Dict]) -> str:
+    """Extract text from JSON nodes"""
+    return "".join(node.get("value", "") for node in nodes if node.get("@ctype") == "textNode")
+
+
+def strip_invisible(s: str) -> str:
+    """Remove invisible characters including zero-width spaces"""
+    return ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('C',))
+
+
+def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str:
+    """Convert Korean date format to Discord timestamp"""
+    _regex = re.compile(
+        r'(?P<month>\d+)월\s+'
+        r'(?P<day>\d+)일'
+        r'(?:\s+(?P<hour>\d{1,2}):(?P<minute>\d{2}))?'
+    )
+    m = _regex.search(korean)
+    if not m:
+        now = datetime.now(tz=tz.gettz(tz_src))
+        utc_now = now.astimezone(tz.UTC)
+        return f"<t:{int(utc_now.timestamp())}:f>"
+
+    month = int(m.group('month'))
+    day = int(m.group('day'))
+    hour = int(m.group('hour')) if m.group('hour') else 0
+    minute = int(m.group('minute')) if m.group('minute') else 0
+
+    now = datetime.now(tz=tz.gettz(tz_src))
+    year = now.year + (month < now.month)
+
+    if hour == 0 and minute == 0:
+        hour = now.hour
+        minute = now.minute
+
+    local_dt = datetime(year, month, day, hour, minute, tzinfo=tz.gettz(tz_src))
+    utc_dt = local_dt.astimezone(tz.UTC)
+    return f"<t:{int(utc_dt.timestamp())}:f>"
+
+
+def get_random_hex_color() -> int:
+    """Generate random color for Discord embed"""
+    return random.randint(0, 0xFFFFFF)
+
+
+# ============================================================================
+# CIRCUIT BREAKER PATTERN
+# ============================================================================
+class CircuitBreaker:
+    """
+    Prevents cascading failures by temporarily blocking operations
+    after consecutive failures.
+
+    States:
+    - CLOSED: Normal operation
+    - OPEN: Blocking requests after failure threshold
+    - HALF_OPEN: Testing if service recovered
+    """
+
+    def __init__(self, failure_threshold: int = 3, timeout: int = 60):
+        self.failure_count = 0
+        self.failure_threshold = failure_threshold
+        self.timeout = timeout
+        self.last_failure_time = None
+        self.state = "CLOSED"
+
+    async def call(self, func, *args, **kwargs):
+        """Execute function with circuit breaker protection"""
+        if self.state == "OPEN":
+            if self.last_failure_time and (datetime.now().timestamp() - self.last_failure_time > self.timeout):
+                log.info("Circuit breaker entering HALF_OPEN state")
+                self.state = "HALF_OPEN"
+            else:
+                raise Exception(f"Circuit breaker is OPEN. Wait {self.timeout}s before retry.")
+
+        try:
+            result = await func(*args, **kwargs)
+            self.reset()
             return result
-    log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
-    FAILED_UID_LIST.append(uid)
-    return result
+        except Exception as e:
+            self.record_failure()
+            log.error(f"Circuit breaker recorded failure: {e}")
+            raise
+
+    def record_failure(self):
+        """Record failure and open circuit if threshold reached"""
+        self.failure_count += 1
+        self.last_failure_time = datetime.now().timestamp()
+        if self.failure_count >= self.failure_threshold:
+            self.state = "OPEN"
+            log.warning(f"Circuit breaker OPENED after {self.failure_count} failures")
+
+    def reset(self):
+        """Reset circuit breaker to normal state"""
+        if self.state != "CLOSED":
+            log.info("Circuit breaker CLOSED - service recovered")
+        self.failure_count = 0
+        self.state = "CLOSED"
 
 
-async def main_coupon_submit(page, coupon_code):
-    # IOS 쿠폰 입력
-    log.info(f"Coupon : {coupon_code}")
-    redeemed_uids = []
-
-    for UID in UID_LIST:
-        # Submit coupon with retry logic
-        result = await submit_coupon_with_retry(page, UID, coupon_code)
-
-        # Handle already-used coupon
-        if COUPON_MESSAGE_ALREADY_USED in result:
-            log.info(f"Coupon already used for UID: {UID}")
-        elif COUPON_MESSAGE_COOLDOWN not in result:
-            log.info(f"Success or other result for UID {UID}: {result}")
-
-        # Adding to redeemed uid list
-        redeemed_uids.append(UID)
-        # try to remove from failed uid list, ignore if not exist
-        [FAILED_UID_LIST.remove(elem) for elem in [UID] if elem in FAILED_UID_LIST]
-        # Clean up
-        await human_like_delay(5000, 10000)  # Delay between UIDs
-
-    log.info(f"Redeemed or processed UIDs: {redeemed_uids}")
-    if len(FAILED_UID_LIST) > 0:
-        write_lines_to_file(FAILED_UID_LIST, FAILED_FILE_PATH)
-        log.info(f"Found failed id writing into file for next run.")
-    else:
-        # If no failed id found
-        write_lines_to_file([], FAILED_FILE_PATH)
+# Global circuit breakers
+api_breaker = CircuitBreaker(failure_threshold=3, timeout=300)  # 5 min
+coupon_breaker = CircuitBreaker(failure_threshold=5, timeout=180)  # 3 min
 
 
-async def main_post_discord(coupon_code, coupon_reward, coupon_date, coupon_image):
-    log.info(f"Posting to Discord . . .")
-    send_discord_embed(coupon_code, coupon_reward, coupon_date, coupon_image)
-
-
-def get_random_hex_color():
-    # Generate a random integer between 0 and 0xFFFFFF
-    random_color = random.randint(0, 0xFFFFFF)
-    return random_color
-
-
-def detect_extension(url: str, sample_bytes: int = 512) -> Optional[str]:
-    """
-    Return the image file extension (e.g. 'png', 'jpg') for the remote *url*.
-    """
-
-    # ------------------------------------------------------------
-    # 1️⃣  Quick look from the HTTP `Content-Type` header
-    # ------------------------------------------------------------
-    try:
-        head = requests.head(url, allow_redirects=True, timeout=10)
-        if head.ok:
-            ct = head.headers.get("Content-Type", "").lower()
-            # `filetype.is_image` works on MIME types when you know it’s an image.
-            # Mapping the MIME to the canonical extension:
-            mime_to_ext = {
-                "image/jpeg": "jpg",
-                "image/pjpeg": "jpg",  # progressive JPEG
-                "image/png": "png",
-                "image/gif": "gif",
-                "image/webp": "webp",
-                "image/bmp": "bmp",
-                "image/tiff": "tif",
-                "image/x-icon": "ico",
-                "image/svg+xml": "svg",
-            }
-            if ct in mime_to_ext:
-                return mime_to_ext[ct]
-
-    except (requests.RequestException, Exception):
-        # network hiccup → skip to the binary check
-        pass
-
-    # ------------------------------------------------------------
-    # 2️⃣  Stream only a few bytes for magic‑number sniffing
-    # ------------------------------------------------------------
-    try:
-        with requests.get(url, stream=True, timeout=10) as r:
-            r.raise_for_status()
-            sample = r.raw.read(sample_bytes)  # 512bytes is enough for filetype
-    except (requests.RequestException, Exception):
+# ============================================================================
+# API FUNCTIONS (httpx async)
+# ============================================================================
+def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Parse JSON feed structure"""
+    post_list = feed_data.get("content", {}).get("feeds", [])
+    if not post_list:
+        log.info("No feeds")
         return None
 
-    # ------------------------------------------------------------
-    # 3️⃣  Let filetype decide
-    # ------------------------------------------------------------
+    post = post_list[0]["feed"]
+    subject = post.get("title", "")
+    if THREAD_COUPON_TITLE not in subject:
+        log.info(f"Skip: {subject}")
+        return None
+
+    raw_contents = post.get("contents", "")
+    if not raw_contents:
+        log.info("Empty contents")
+        return None
+
+    try:
+        doc = json.loads(raw_contents)
+    except json.JSONDecodeError as e:
+        log.error(f"JSON parse error: {e}")
+        return None
+
+    components = doc.get("document", {}).get("components", [])
+    if not components:
+        log.info("No components")
+        return None
+
+    # Extract paragraphs
+    all_paragraphs = []
+    for comp in components:
+        if comp.get("@ctype") == "text":
+            for para in comp.get("value", []):
+                para_text = _clean(_extract_text_from_nodes(para.get("nodes", [])))
+                all_paragraphs.append(para_text)
+
+    if not all_paragraphs:
+        log.info("No paragraphs")
+        return None
+
+    # Find coupon code
+    coupon_code = None
+    for i, para in enumerate(all_paragraphs):
+        if COUPON_CLAIM_HEADER in para:
+            for j in range(i + 1, min(i + 3, len(all_paragraphs))):
+                next_para = all_paragraphs[j].strip()
+                if next_para and len(next_para) <= 20 and not next_para.startswith(("-", "◈", "♥")):
+                    coupon_code = next_para
+                    break
+            break
+
+    # Find rewards
+    reward_lines = []
+    reward_start = False
+    for para in all_paragraphs:
+        if COUPON_CLAIM_REWARD in para:
+            reward_start = True
+            continue
+        if reward_start:
+            para_stripped = para.strip()
+            if para_stripped.startswith("-") and not any(h in para for h in (COUPON_CLAIM_HEADER, COUPON_CLAIM_DATE)):
+                reward_lines.append(para_stripped)
+            elif any(h in para for h in (COUPON_CLAIM_DATE, COUPON_CLAIM_HEADER)):
+                break
+
+    # Find date
+    coupon_date = ""
+    date_start = False
+    for para in all_paragraphs:
+        if COUPON_CLAIM_DATE in para:
+            date_start = True
+            continue
+        if date_start:
+            if "월" in para and "일" in para and para.strip().startswith("-"):
+                coupon_date = para.strip()
+                break
+            elif any(h in para for h in (COUPON_CLAIM_HEADER, COUPON_CLAIM_REWARD)):
+                break
+
+    # Find image
+    coupon_image = None
+    header_found = False
+    for comp in components:
+        if header_found:
+            break
+        if comp.get("@ctype") == "image":
+            src = comp.get("src")
+            if src and src.startswith("http"):
+                coupon_image = src
+        elif comp.get("@ctype") == "text":
+            for para in comp.get("value", []):
+                para_text = _extract_text_from_nodes(para.get("nodes", []))
+                if COUPON_CLAIM_HEADER in para_text:
+                    header_found = True
+                    break
+
+    if not coupon_image:
+        coupon_image = post.get("repImageUrl")
+
+    if not coupon_code:
+        log.info("No coupon code found")
+        return None
+
+    log.info(f"Extracted: {coupon_code}")
+    return {
+        "coupon_code": coupon_code,
+        "coupon_reward": "\n".join(reward_lines),
+        "coupon_date": coupon_date,
+        "coupon_image": coupon_image,
+    }
+
+
+async def get_latest_coupon_from_api() -> Optional[Dict[str, str]]:
+    """Fetch latest coupon from API using httpx (async)"""
+    url = (
+        "https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed"
+        "?boardId=31&limit=1&offset=0&order=NEW"
+    )
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/129.0.0.0 Safari/537.36"
+        ),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPError as exc:
+        log.error(f"Failed to fetch coupon feed: {exc}")
+        return None
+
+    return extract_coupon_from_feed(data)
+
+
+async def get_latest_coupon_cached() -> Optional[Dict[str, str]]:
+    """Cached API call with TTL to prevent hammering"""
+    now = datetime.now()
+
+    if (_api_cache["data"] and _api_cache["timestamp"] and
+            now - _api_cache["timestamp"] < CACHE_TTL):
+        log.debug("Using cached API response")
+        return _api_cache["data"]
+
+    result = await api_breaker.call(get_latest_coupon_from_api)
+    _api_cache["data"] = result
+    _api_cache["timestamp"] = now
+    return result
+
+
+# ============================================================================
+# DISCORD FUNCTIONS
+# ============================================================================
+async def detect_extension_async(url: str, sample_bytes: int = 512) -> Optional[str]:
+    """Async version - detect image extension from URL"""
+    # Try Content-Type header first
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            head = await client.head(url, follow_redirects=True)
+            if head.status_code == 200:
+                ct = head.headers.get("Content-Type", "").lower()
+                mime_to_ext = {
+                    "image/jpeg": "jpg",
+                    "image/pjpeg": "jpg",
+                    "image/png": "png",
+                    "image/gif": "gif",
+                    "image/webp": "webp",
+                    "image/bmp": "bmp",
+                    "image/tiff": "tif",
+                    "image/x-icon": "ico",
+                    "image/svg+xml": "svg",
+                }
+                if ct in mime_to_ext:
+                    return mime_to_ext[ct]
+    except httpx.HTTPError:
+        pass
+
+    # Fallback: read first bytes
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            async with client.stream("GET", url) as r:
+                r.raise_for_status()
+                sample = await r.aread(sample_bytes)
+    except httpx.HTTPError:
+        return None
+
     kind = filetype.guess(sample)
     return kind.extension if kind else None
 
 
-def send_discord_embed(coupon_code: str, coupon_reward: str, coupon_date: str, coupon_image: str):
-    local_filename = f"{coupon_code}.{detect_extension(coupon_image)}"
+async def send_discord_embed_async(coupon_code: str, coupon_reward: str, coupon_date: str, coupon_image: str):
+    """Async Discord webhook post"""
+    ext = await detect_extension_async(coupon_image)
+    local_filename = f"{coupon_code}.{ext}" if ext else f"{coupon_code}.jpg"
 
     split_coupon_date = coupon_date.split('~')
     claim_date_from = _korean_to_utc_epoch_discord(split_coupon_date[0])
-    claim_date_to = _korean_to_utc_epoch_discord(split_coupon_date[1])
+    claim_date_to = _korean_to_utc_epoch_discord(
+        split_coupon_date[1] if len(split_coupon_date) > 1 else split_coupon_date[0])
     embed_claim_date = f"{claim_date_from} ~ {claim_date_to}"
 
     webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL)
-
     embed = DiscordEmbed(title="Trickcal RE:VIVE KR - Coupon", color=get_random_hex_color())
 
     embed.set_timestamp()
@@ -489,7 +630,9 @@ def send_discord_embed(coupon_code: str, coupon_reward: str, coupon_date: str, c
     embed.add_embed_field(name="Coupon Claim Method", value=f"[Ingame or Click Here]({IOS_COUPON_URL})", inline=False)
     embed.set_footer(text="ERPINI COUPON POSTER powered by 🍬🍭🍰🥖", icon_url="https://i.imgur.com/eTEpq7I.png")
 
-    with requests.get(coupon_image, stream=True) as r:
+    # Download image async
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(coupon_image)
         webhook.add_file(file=r.content, filename=local_filename)
         embed.set_image(url=f"attachment://{local_filename}")
 
@@ -497,92 +640,245 @@ def send_discord_embed(coupon_code: str, coupon_reward: str, coupon_date: str, c
     response = webhook.execute()
 
     if response.ok:
-        log.info("✅ Posting to Discord Done !")
+        log.info("✅ Discord notification sent!")
     else:
-        log.error(f"Failed to send embeds. HTTP Response Code: {response.status_code}")
+        log.error(f"Failed to send Discord notification. HTTP {response.status_code}")
 
 
-async def couponstance():
-    async with Stealth().use_async(async_playwright()) as p:
+# ============================================================================
+# COUPON SUBMISSION FUNCTIONS
+# ============================================================================
+async def human_like_delay(min_ms=100, max_ms=500):
+    """Add random delay to mimic human behavior"""
+    await asyncio.sleep(random.uniform(min_ms / 1000, max_ms / 1000))
 
-        if not UID_LIST:
-            log.info("UID Not found")
-            return
 
-        FAILED_UID_LIST[:] = load_lines_from_file(FAILED_FILE_PATH)
+async def submit_coupon(page, uid, coupon_code):
+    """Submit coupon for a single UID"""
+    log.info(f"Submitting coupon for UID: {uid}")
+    await page.goto(IOS_COUPON_URL, wait_until='domcontentloaded')
 
-        browser = await p.chromium.launch(headless=True,
-                                          args=[
-                                              '--disable-gpu',                    # No GPU needed
-                                              '--disable-dev-shm-usage',          # Fix Docker shared memory
-                                              '--disable-setuid-sandbox',         # Docker compatibility
-                                              '--no-sandbox',                     # Reduce overhead
-                                              '--disable-features=IsolateOrigins,site-per-process',  # Reduce memory
-                                              '--disable-blink-features=AutomationControlled',  # Anti-detection
-                                          ])
-        context = await browser.new_context(
-            viewport=ViewportSize(width=1280, height=720),
-            locale='ko-KR',  # Korean locale for Naver
-        )
+    await human_like_delay(500, 1500)
+    await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+    await page.locator('#UserId').type(uid, delay=random.randint(50, 150))
+    await human_like_delay(300, 1000)
+    await page.locator('#CouponCode').type(coupon_code, delay=random.randint(50, 150))
 
-        await context.route("**/*.{png,jpg,jpeg,gif,svg,webp,ico}", lambda route: route.abort())
-        await context.route("**/*.{woff,woff2,ttf,otf}", lambda r: r.abort())
+    await human_like_delay(500, 1500)
+    await page.click('button[onclick="CouponSubmit()"]')
+    await human_like_delay(1000, 3000)
 
-        page = await context.new_page()
+    result = await page.locator('#result-message').text_content()
+    log.info(f"Result for UID {uid}: {result}")
+    return result
 
-        # Get the Coupon Page URL
-        full_url = await extract_coupon_link(page)
-        if not full_url:
-            return
 
-        # Get the Coupon from Coupon Page
-        result = await extract_coupon_code_and_stuff(page, full_url)
-        if not result:
-            return
-        coupon_code = result.get('coupon_code')
-        coupon_reward = result.get('coupon_reward')
-        coupon_date = result.get('coupon_date')
-        coupon_image = result.get('coupon_image')
-
-        # Adding Local Coupon version checker
+async def submit_coupon_with_retry(page, uid, coupon_code):
+    """Submit coupon with exponential backoff retry"""
+    for attempt in range(MAX_RETRIES):
         try:
-            latest_coupon = load_line_from_file(COUPON_FILE_PATH)
+            result = await coupon_breaker.call(submit_coupon, page, uid, coupon_code)
 
-            if latest_coupon == coupon_code:
-                # Trying to resubmit failed uid on old coupon aka same coupon
-                if len(FAILED_UID_LIST) > 0:
-                    log.info(f"Found failed id, trying to submit coupon again.")
-                    UID_LIST[:] = FAILED_UID_LIST
-                    await main_coupon_submit(page, latest_coupon)
-
-                log.info(f"Coupon Same, Exiting !")
-                return
+            if COUPON_MESSAGE_COOLDOWN in result:
+                wait_time = (2 ** attempt) * 30
+                log.warning(
+                    f"Cooldown detected for UID {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time}s...")
+                await asyncio.sleep(wait_time + random.uniform(0, 5))
             else:
-                # Reset the failed since its new coupon
-                FAILED_UID_LIST[:] = []
-                write_lines_to_file([], FAILED_FILE_PATH)
-        except FileNotFoundError:
-            pass
+                return result
+        except Exception as e:
+            log.error(f"Error submitting coupon for UID {uid}: {e}")
+            if attempt == MAX_RETRIES - 1:
+                FAILED_UID_LIST.append(uid)
+                return None
+            await asyncio.sleep(10)
 
-        # Check Past Coupon, Prevent the coupon getter URL were shifted
-        past_coupon = load_lines_from_file(PAST_COUPON_FILE_PATH)
+    log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
+    FAILED_UID_LIST.append(uid)
+    return None
 
-        if coupon_code in past_coupon:
-            log.info(f"Past Coupon Detected, Exiting !")
-            write_line_to_file(coupon_code, COUPON_FILE_PATH)
+
+async def main_coupon_submit(page, coupon_code, uids_to_process):
+    """Main coupon submission logic - sequential processing"""
+    log.info(f"Processing {len(uids_to_process)} UIDs for coupon: {coupon_code}")
+
+    successful_uids = []
+
+    for uid in uids_to_process:
+        result = await submit_coupon_with_retry(page, uid, coupon_code)
+
+        if result:
+            if COUPON_MESSAGE_ALREADY_USED in result:
+                log.info(f"✓ Coupon already used for UID: {uid}")
+            elif COUPON_MESSAGE_COOLDOWN not in result:
+                log.success(f"✓ Success for UID {uid}: {result}")
+
+            successful_uids.append(uid)
+            # Remove from failed list if exists
+            if uid in FAILED_UID_LIST:
+                FAILED_UID_LIST.remove(uid)
+
+        # Delay between UIDs
+        await human_like_delay(5000, 10000)
+
+    log.info(f"Processed UIDs: {len(successful_uids)}/{len(uids_to_process)}")
+
+    # Update failed UIDs file
+    if FAILED_UID_LIST:
+        await write_lines_to_file_async(FAILED_UID_LIST, FAILED_FILE_PATH)
+        log.warning(f"Failed UIDs written to file: {len(FAILED_UID_LIST)}")
+    else:
+        await write_lines_to_file_async([], FAILED_FILE_PATH)
+
+
+# ============================================================================
+# BROWSER MANAGER
+# ============================================================================
+class BrowserManager:
+    """Context manager for single browser instance"""
+
+    def __init__(self):
+        self.browser = None
+        self.playwright = None
+        self.context = None
+
+    async def __aenter__(self):
+        self.playwright = await Stealth().use_async(async_playwright()).__aenter__()
+        self.browser = await self.playwright.chromium.launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox']
+        )
+        self.context = await self.browser.new_context(
+            viewport=ViewportSize(width=1280, height=720)
+        )
+        return self
+
+    async def __aexit__(self, *args):
+        if self.context:
+            await self.context.close()
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.__aexit__(*args)
+
+    async def create_page(self):
+        """Create a new page in existing context"""
+        return await self.context.new_page()
+
+
+# ============================================================================
+# MAIN LOGIC
+# ============================================================================
+async def couponstance():
+    """
+    Optimized main function:
+    1. Load state async (parallel)
+    2. Check coupon via cached API
+    3. Determine action (decision variables)
+    4. Single browser launch if needed
+    5. Parallel post-processing
+    """
+    log.info("🚀 Starting coupon check cycle...")
+
+    # ========================================
+    # STEP 1: Load State (Parallel)
+    # ========================================
+    latest_coupon, past_coupons_list, failed_uids = await asyncio.gather(
+        load_line_from_file_async(COUPON_FILE_PATH),
+        load_lines_from_file_async(PAST_COUPON_FILE_PATH),
+        load_lines_from_file_async(FAILED_FILE_PATH)
+    )
+
+    past_coupons = set(past_coupons_list)
+    FAILED_UID_LIST.clear()
+    FAILED_UID_LIST.extend(failed_uids)
+
+    # ========================================
+    # STEP 2: Fetch Latest Coupon (Cached API)
+    # ========================================
+    api_result = await get_latest_coupon_cached()
+    if not api_result:
+        log.info("❌ No coupon available from API. Exiting.")
+        return
+
+    coupon_code = api_result["coupon_code"]
+    coupon_reward = api_result["coupon_reward"]
+    coupon_date = api_result["coupon_date"]
+    coupon_image = api_result["coupon_image"]
+
+    # ========================================
+    # STEP 3: Determine Action (Decision Matrix)
+    # ========================================
+    is_new_coupon = coupon_code != latest_coupon and coupon_code not in past_coupons
+    is_same_coupon = coupon_code == latest_coupon
+    is_past_coupon = coupon_code in past_coupons
+
+    needs_retry = is_same_coupon and FAILED_UID_LIST and POST_COUPON
+    needs_submission = is_new_coupon and POST_COUPON and UID_LIST
+    should_post_discord = POST_DISCORD and DISCORD_WEBHOOK_URL and is_new_coupon
+
+    # Decision logic
+    if is_past_coupon:
+        log.info("⚠️ Coupon found in history → updating latest_coupon.txt only")
+        await write_line_to_file_async(coupon_code, COUPON_FILE_PATH)
+        return
+
+    if is_same_coupon:
+        if needs_retry:
+            log.info(f"♻️ Retrying {len(FAILED_UID_LIST)} failed UIDs with existing coupon...")
+            uids_to_process = FAILED_UID_LIST.copy()
+            should_submit = True
+        else:
+            log.info("✅ Coupon already processed, no retries needed")
             return
+    else:  # is_new_coupon
+        log.success(f"🎉 NEW COUPON DETECTED: {coupon_code}")
+        uids_to_process = UID_LIST.copy()
+        should_submit = needs_submission
+        # Clear failed list for new coupon
+        FAILED_UID_LIST.clear()
+        await write_lines_to_file_async([], FAILED_FILE_PATH)
 
-        if POST_COUPON:
-            await main_coupon_submit(page, coupon_code)
+    # ========================================
+    # STEP 4: Browser Operations (Single Instance)
+    # ========================================
+    if should_submit and uids_to_process:
+        log.info(f"🌐 Launching browser for {len(uids_to_process)} UIDs...")
+        async with BrowserManager() as bm:
+            page = await bm.create_page()
+            await main_coupon_submit(page, coupon_code, uids_to_process)
 
-        if POST_DISCORD and DISCORD_WEBHOOK_URL:
-            await main_post_discord(coupon_code, coupon_reward, coupon_date, coupon_image)
+    # ========================================
+    # STEP 5: Post-Processing (Parallel)
+    # ========================================
+    tasks = []
 
-        # Update Coupon to Local Coupon file if Different or Not Exist
-        # Also append into Past Coupon list
-        write_line_to_file(coupon_code, COUPON_FILE_PATH)
-        append_line_to_file(coupon_code, PAST_COUPON_FILE_PATH)
+    # Discord notification
+    if should_post_discord:
+        tasks.append(send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image))
+
+    # State file updates
+    if is_new_coupon:
+        tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
+        tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
+
+    # Execute all tasks in parallel
+    if tasks:
+        await asyncio.gather(*tasks)
+
+    # ========================================
+    # STEP 6: Final Logging
+    # ========================================
+    if is_new_coupon:
+        log.success("✅ New coupon processed successfully!")
+    elif is_same_coupon and needs_retry:
+        log.success("✅ Retry cycle completed!")
+
+    #log.info("=" * 60)
 
 
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
 if __name__ == "__main__":
     asyncio.run(couponstance())

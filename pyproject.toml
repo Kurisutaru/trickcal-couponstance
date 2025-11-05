@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "aiofiles>=25.1.0",
     "discord-webhook>=1.4.1",
     "environs>=14.3.0",
     "filetype>=1.2.0",
+    "httpx>=0.28.1",
     "loguru>=0.7.3",
     "playwright>=1.55.0",
     "playwright-stealth>=2.0.0",
