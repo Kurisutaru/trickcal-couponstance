@@ -39,7 +39,6 @@
 # ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 import asyncio
-import json
 import os
 import random
 import re
@@ -49,6 +48,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Dict, Any, List
+from urllib.parse import urlsplit, urlunsplit
 
 import aiofiles
 import filetype
@@ -135,6 +135,7 @@ FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 # API Cache
 _api_cache = {"data": None, "timestamp": None}
 CACHE_TTL = timedelta(minutes=5)
+
 
 # ============================================================================
 # Playwright version of scraping content
@@ -255,6 +256,7 @@ async def extract_coupon_code_and_stuff(page, full_url):
         }
     else:
         return None
+
 
 # ============================================================================
 # ASYNC FILE I/O (aiofiles)
@@ -409,18 +411,32 @@ class CircuitBreaker:
 api_breaker = CircuitBreaker(failure_threshold=3, timeout=300)  # 5 min
 coupon_breaker = CircuitBreaker(failure_threshold=5, timeout=180)  # 3 min
 
+
+# --------------------------------------------------------------
+# Tiny helper – strip everything after the first ?
+# --------------------------------------------------------------
+def _clean_url(url: Optional[str]) -> Optional[str]:
+    """Remove query string (and fragment) from a URL."""
+    if not url:
+        return None
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))  # no query, no fragment
+
+
 # --------------------------------------------------------------
 # Block model (same as before, but tiny)
 # --------------------------------------------------------------
 class BlockType(Enum):
     IMAGE = "image"
-    TEXT  = "text"
+    TEXT = "text"
+
 
 @dataclass
 class Block:
     type: BlockType
     content: str
-    is_empty: bool = False          # only for TEXT blocks
+    is_empty: bool = False  # only for TEXT blocks
+
 
 # --------------------------------------------------------------
 # 1. Un-escape + walk the WYSIWYG document
@@ -435,7 +451,9 @@ def _parse_document(raw_escaped_json: str) -> List[Block]:
 
         # ---- IMAGE -------------------------------------------------
         if ctype == "image":
-            blocks.append(Block(BlockType.IMAGE, comp["src"]))
+            raw_src = comp.get("src")
+            clean_src = _clean_url(raw_src) or raw_src
+            blocks.append(Block(BlockType.IMAGE, clean_src))
             continue
 
         # ---- TEXT --------------------------------------------------
@@ -455,6 +473,7 @@ def _parse_document(raw_escaped_json: str) -> List[Block]:
 
     return blocks
 
+
 # --------------------------------------------------------------
 # 2. CouponInfo – what we finally return
 # --------------------------------------------------------------
@@ -463,7 +482,8 @@ class CouponInfo:
     code: Optional[str] = None
     rewards: List[str] = field(default_factory=list)
     expiration: Optional[str] = None
-    image: Optional[str] = None      # image **right before** the header
+    image: Optional[str] = None  # image **right before** the header
+
 
 # --------------------------------------------------------------
 # 3. Extract semantics from the ordered blocks
@@ -486,7 +506,7 @@ def _extract_coupon(blocks: List[Block]) -> CouponInfo:
                 if prev.type == BlockType.IMAGE:
                     info.image = prev.content
                     break
-                if not prev.is_empty:          # stop at any real text
+                if not prev.is_empty:  # stop at any real text
                     break
 
             # 2. coupon code – next non-empty text block
@@ -533,11 +553,12 @@ def _extract_coupon(blocks: List[Block]) -> CouponInfo:
                             info.expiration = date_b.content.strip()
                             break
                     break
-            break   # assume only one coupon per post
+            break  # assume only one coupon per post
 
         i += 1
 
     return info
+
 
 # ============================================================================
 # Process the feed
@@ -562,7 +583,6 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
         log.info("Empty contents")
         return None
 
-    # ---- parse -------------------------------------------------
     try:
         blocks = _parse_document(raw)
     except Exception as e:
@@ -575,11 +595,11 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
         log.info("No coupon code found")
         return None
 
-    # fallback image if we didn’t find one right before the header
+    # fallback image (cleaned) if we didn’t find one before the header
     if not info.image:
-        info.image = post.get("repImageUrl")
+        info.image = _clean_url(post.get("repImageUrl"))
 
-    log.info(f"Extracted coupon: {info.code}")
+    log.info(f"Extracted coupon: {info.code}  →  image: {info.image}")
     return {
         "coupon_code": info.code,
         "coupon_reward": "\n".join(info.rewards),
@@ -939,7 +959,7 @@ async def couponstance():
     elif is_same_coupon and needs_retry:
         log.success("✅ Retry cycle completed!")
 
-    #log.info("=" * 60)
+    # log.info("=" * 60)
 
 
 # ============================================================================

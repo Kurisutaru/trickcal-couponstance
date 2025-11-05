@@ -1,10 +1,11 @@
 # Trickcal Coupon Stance
 
 ## Changelog
-1. Adding feature to Post Discord Webhook
-2. Adding things to make playwright behavior like real human on top of humanizer script (maybe work, maybe not)
-3. Retry on failed input coupon
-4. Log Rotation every sunday
+1. [NEW] Parsing coupon mechanism, thanks to Author of [Trickcal Alarm](https://github.com/ngvf1222/Trickcal_alarm) for the Naver feed url !
+2. Adding feature to Post Discord Webhook
+3. Adding things to make playwright behavior like real human on top of humanizer script (maybe work, maybe not)
+4. Retry on failed input coupon
+5. Log Rotation every sunday
 
 ## Pre-Changelog
 1. Adding .env and support multiple UID in single run
