@@ -599,7 +599,7 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
     if not info.image:
         info.image = _clean_url(post.get("repImageUrl"))
 
-    log.info(f"Extracted coupon: {info.code}  →  image: {info.image}")
+    log.info(f"Extracted coupon: {info.code} → image: {info.image}")
     return {
         "coupon_code": info.code,
         "coupon_reward": "\n".join(info.rewards),
@@ -843,8 +843,8 @@ class BrowserManager:
             await self.context.close()
         if self.browser:
             await self.browser.close()
-        if self.playwright:
-            await self.playwright.__aexit__(*args)
+        #if self.playwright:
+        #    await self.playwright.__aexit__(*args)
 
     async def create_page(self):
         """Create a new page in existing context"""
@@ -900,34 +900,46 @@ async def couponstance():
 
     needs_retry = is_same_coupon and FAILED_UID_LIST and POST_COUPON
     needs_submission = is_new_coupon and POST_COUPON and UID_LIST
+    needs_resubmission = is_same_coupon and POST_COUPON and FAILED_UID_LIST
     should_post_discord = POST_DISCORD and DISCORD_WEBHOOK_URL and is_new_coupon
 
+    uids_to_process = []
+    tasks = []
+
     # Decision logic
-    if is_past_coupon:
+    if is_new_coupon:
+        log.success(f"🎉 NEW COUPON DETECTED: {coupon_code}")
+
+        # Post to Discord immediately if enabled
+        if should_post_discord:
+            await send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image)
+
+        # Prepare for submission to all UIDs
+        if POST_COUPON and UID_LIST:
+            uids_to_process = UID_LIST.copy()
+            FAILED_UID_LIST.clear()  # Clear failed for new coupon
+            await write_lines_to_file_async([], FAILED_FILE_PATH)  # Clear failed file immediately
+
+        tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
+        tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
+    elif needs_resubmission:
+        # For retries, use coupon from latest_coupon.txt.
+        if failed_uids and POST_COUPON:
+            coupon_code = latest_coupon
+            if not coupon_code:
+                log.warning("No latest coupon found for retries. Skipping.")
+                return
+            log.info(f"♻️ Retrying {len(failed_uids)} failed UIDs with coupon: {coupon_code}")
+            uids_to_process = failed_uids.copy()
+    else:
         log.info("⚠️ Coupon found in history → updating latest_coupon.txt only")
         await write_line_to_file_async(coupon_code, COUPON_FILE_PATH)
         return
 
-    if is_same_coupon:
-        if needs_retry:
-            log.info(f"♻️ Retrying {len(FAILED_UID_LIST)} failed UIDs with existing coupon...")
-            uids_to_process = FAILED_UID_LIST.copy()
-            should_submit = True
-        else:
-            log.info("✅ Coupon already processed, no retries needed")
-            return
-    else:  # is_new_coupon
-        log.success(f"🎉 NEW COUPON DETECTED: {coupon_code}")
-        uids_to_process = UID_LIST.copy()
-        should_submit = needs_submission
-        # Clear failed list for new coupon
-        FAILED_UID_LIST.clear()
-        await write_lines_to_file_async([], FAILED_FILE_PATH)
-
     # ========================================
     # STEP 4: Browser Operations (Single Instance)
     # ========================================
-    if should_submit and uids_to_process:
+    if ( needs_submission or needs_resubmission ) and uids_to_process:
         log.info(f"🌐 Launching browser for {len(uids_to_process)} UIDs...")
         async with BrowserManager() as bm:
             page = await bm.create_page()
@@ -936,17 +948,6 @@ async def couponstance():
     # ========================================
     # STEP 5: Post-Processing (Parallel)
     # ========================================
-    tasks = []
-
-    # Discord notification
-    if should_post_discord:
-        tasks.append(send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image))
-
-    # State file updates
-    if is_new_coupon:
-        tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
-        tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
-
     # Execute all tasks in parallel
     if tasks:
         await asyncio.gather(*tasks)
@@ -959,7 +960,7 @@ async def couponstance():
     elif is_same_coupon and needs_retry:
         log.success("✅ Retry cycle completed!")
 
-    # log.info("=" * 60)
+    log.info("=" * 60)
 
 
 # ============================================================================
