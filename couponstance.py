@@ -4,6 +4,39 @@
 #           \     \___(  <_> )  |  /  |_> >  <_> )   |  \\___ \  |  |  / __ \|   |  \  \__\  ___/
 #            \______  /\____/|____/|   __/ \____/|___|  /____  > |__| (____  /___|  /\___  >___  >
 #                   \/             |__|               \/     \/            \/     \/     \/    \/
+#     ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀       ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⢤⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀      ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡴⠋⠔⣦⠹⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀   ⠀⠀⠀⠀⠀⠀⠀⢀⣠⡴⢶⠓⢛⡙⢶⡀⠀⠀⠀⠀⠀⢀⡴⠋⢄⣉⡾⢳⡕⢻⡄⠀⠀⢸⣉⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡤⠤⠤⣤⣀⣀⣀⣤⢴⡞⣯⣳⣌⣡⠞⠉⣇⠀⢻⡀⠀⠀⠀⣠⠞⢁⡘⠄⡾⣀⢈⣹⣎⣷⠀⠀⣾⠉⠙⢏⡛⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣾⠁⠀⢀⡞⠊⠉⠀⠀⠀⠀⠀⢀⣀⡈⠙⠒⢤⡈⣷⠘⡅⠀⠀⣰⠏⠐⡂⠤⡉⣍⢉⡉⢡⠉⢌⡙⠛⠻⣄⠀⠌⢧⠸⣆⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡴⢒⡛⣝⣻⢧⡲⣤⢒⡟⣦⠄⡀⢂⠐⠠⠀⠄⠀⠉⠙⢦⣀⣈⠳⣄⡏⠀⣰⠋⠄⣱⡬⡶⢋⠩⢤⡘⢆⡚⡔⢢⢍⡒⣌⠳⢬⣄⣠⣙⣯⡙⠛⠶⢤⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⠁⢦⡽⠋⠀⠀⡙⡙⠋⡛⠉⡀⠐⢠⡈⢀⠡⠈⡐⠠⢀⠀⠉⢈⡇⠈⢷⡴⠃⢌⠢⠹⣦⣰⣉⠳⡌⣜⠪⡴⣉⠇⣎⠲⣌⢓⡲⣌⠡⣉⢳⡄⠣⠌⢂⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡯⢠⠟⠀⠀⢄⡱⢾⡁⠄⡳⣄⠠⣁⢠⡙⢦⣦⣐⣠⣐⣀⣦⠴⠚⠀⠀⣼⠃⡘⠠⢂⠱⡌⣟⢹⠿⣾⣞⢿⣙⡼⣻⡔⡣⢜⢢⡙⣿⢳⣄⠢⠹⣇⢘⡼⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⠇⠀⠠⢈⡞⠁⠀⠳⣤⣑⣩⣟⣾⡿⣽⣻⡷⠾⣟⢫⠉⣶⠀⡄⠀⢰⡇⠀⠄⠐⠀⢢⣹⡇⠚⠘⠣⣛⠿⣮⡙⠟⢧⡽⣬⠶⠝⠁⠀⠻⣦⠡⢹⡞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡟⠀⢀⠂⡟⠐⢶⡦⠴⠀⠉⠡⠉⢤⠷⠻⠁⠂⠁⣹⠀⠀⢹⣠⠇⠀⢸⡅⠀⠌⠀⠌⡰⣯⡇⠀⣷⠀⠌⠱⣹⠛⠆⠀⠀⠀⠀⠐⠯⠟⠂⢹⡦⢁⢿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⠀⠀⠂⢼⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡤⠖⠋⢁⠠⢀⢸⡏⠀⠀⢸⡆⠈⠔⢨⠐⡡⢿⡇⠠⠙⠶⠮⠟⠁⠀⠀⠀⠀⠀⢀⡀⠀⠀⠀⠘⣧⠃⡌⠳⢦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣠⠴⠋⠀⠠⠁⣾⠰⠖⠖⣲⠖⠀⠀⠀⠀⠀⢠⣦⡀⠠⠘⡀⠢⢤⠏⠀⠀⠀⠀⣷⠈⢌⡲⠻⣄⣎⠿⣄⠁⢢⠐⢠⣆⠀⠀⠀⠀⠀⠘⢭⠙⠳⠆⠀⡷⡁⠆⡑⢢⣸⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣯⠀⠀⠀⠀⠠⣡⠆⡀⢠⠞⠁⠀⠀⠀⣰⢶⠚⠳⢎⡇⠀⠡⢐⡼⠃⠀⠀⠀⠀⢰⣋⡷⠊⠁⠐⠋⣸⢂⡙⢶⡀⠌⠘⠜⠉⠚⠣⠤⠀⠀⠈⢷⠀⠠⢈⢳⡅⠚⣾⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠓⠿⡷⠀⠀⢡⠏⡀⠔⡀⠎⠠⠁⠀⠉⠛⠲⠭⠒⠋⠀⠀⢠⡞⠀⠀⠀⠀⠀⢀⡿⠉⠀⠀⠀⢀⡤⢹⠄⢂⠆⡙⢦⡀⠀⠀⠀⠀⠀⠀⠠⢁⠂⡌⠐⡄⠂⣿⠠⠙⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡾⠁⠀⠠⢹⡂⠐⠠⠐⡈⠄⠁⠀⠀⠀⠀⠀⠀⠀⠀⢀⡾⣁⡾⠀⠀⠀⣰⠋⠀⠀⠀⠀⠀⣼⣗⠋⢬⡆⢂⠅⣊⣧⠀⡀⠀⠀⠀⠀⠐⠀⠂⠄⠡⠐⣀⡿⡰⠡⠌⢷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡴⠋⠀⠀⡀⠂⣄⠻⣤⣁⠀⡀⠀⠀⢀⠀⡀⡀⠄⡐⣄⣊⡴⣿⡱⣏⢥⠀⢰⠃⠀⠀⠀⠀⢀⣼⢧⣿⢈⠰⡏⢄⠊⣤⢿⢿⡶⣥⣆⣄⣠⣀⣀⢈⣀⣡⠶⢏⡱⢥⠓⡌⠰⢘⠳⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣶⢛⡤⣀⣄⢢⡴⡝⢦⡔⣶⠏⠛⠲⠟⠾⠶⡾⠶⠟⢿⡛⢽⣋⣙⡵⠛⣯⠲⣩⢿⡀⠀⠀⣠⠴⠋⠁⠀⣿⢠⡽⠳⢮⣞⣉⡻⠌⣳⡄⠈⠛⢧⡭⣙⠫⡍⢥⢋⡆⠳⣌⠳⣌⡑⢂⠡⢌⡙⠶⢦⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠻⣾⣴⣳⣬⢷⣻⡽⡞⠋⠁⠀⠀⠀⠀⠀⣻⡵⢦⣀⡞⠁⠠⠉⠁⠠⢀⠙⠷⡵⢮⣷⠷⠋⠁⠀⠀⠀⢀⡟⢉⠐⠠⢀⠈⠌⢀⠘⡄⢷⡴⠚⢶⣷⣈⠳⣌⠣⢎⡜⡱⢌⠳⡰⡘⡄⢃⠄⠢⠌⢂⠩⢙⠺⠦⣤⣤⣤⣄⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠈⠉⠉⠀⠀⢀⡤⣄⣀⡤⠖⠋⠁⠀⢈⡷⠀⠌⠐⠠⠁⠂⠄⢢⠾⡅⠀⠈⠀⠀⠀⠀⠀⢠⡞⠁⡀⠂⡁⠄⢂⠈⠄⠠⢘⡈⣷⡈⠤⠘⠛⢶⣌⣇⢣⡜⣱⢊⠵⣡⠓⣌⠢⠌⡑⡈⠆⡑⢨⠐⠢⠄⡄⢠⢸⡇⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⠽⠀⠈⠀⣀⣠⠤⠤⠶⠞⠁⡐⠈⡀⠂⡁⠐⠈⢯⠀⠀⠀⠀⠀⠀⢀⣠⣼⠏⢀⠂⠄⡁⠄⠂⠄⡈⠄⠡⢀⠐⣈⣉⡛⢶⡀⠀⠀⠉⠉⠉⢳⠎⡜⡴⣉⢆⢣⠘⢠⠁⠎⡐⠡⠌⡡⠒⡈⣤⠿⠁⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣏⠀⠀⢀⡾⣩⣤⡐⠠⢀⠐⣦⠀⠂⠄⢁⠠⠁⡈⠘⠧⣤⣠⣤⠶⠞⠋⠁⣾⠌⠠⠐⠠⢀⠂⠡⠐⠀⠄⡑⠊⠋⠉⢈⢉⣬⡝⢻⡄⠀⠀⠀⣻⣎⢱⢢⡑⢎⠦⣉⠂⡜⢠⢁⢣⣘⣤⠷⠛⠉⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠚⢻⡗⠋⢄⠻⣦⠀⠂⣙⡶⠋⢀⠂⢀⠂⠄⢁⠠⠀⠰⡀⣿⠀⠀⠀⢻⡌⠐⠈⠄⠂⠠⠁⢂⠁⠂⠄⠂⠡⠈⣴⢋⠉⠙⠛⢿⣟⣙⣋⠳⡌⢆⠧⣘⢣⠚⡤⢃⡐⠢⡘⠿⢯⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⡴⢶⠋⣿⠠⢉⠄⢢⠘⣷⠛⠁⠠⠐⡀⠐⠠⠐⠈⡀⠄⢁⠢⢡⡟⠀⠀⠀⢸⣇⠈⡐⠈⠠⠁⠌⡀⠌⠐⡈⠠⠁⣼⠃⠀⠀⠀⢠⠏⠀⠈⠉⠳⢮⣇⣎⡱⢊⡵⢡⢣⠐⡡⣐⣢⡼⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠖⠋⠁⠈⠑⠸⣇⠢⢁⠌⢂⢔⣹⢦⡈⠐⠠⢀⠁⠂⠌⠐⢀⠈⡄⢃⣾⠁⠀⠀⠀⠀⢻⡄⠠⠁⢂⠡⠐⠀⠄⡁⠠⠁⣼⢃⠂⠀⠀⠀⡟⠀⠀⠀⠀⠀⣰⢯⡻⢷⣧⠜⣿⠛⠛⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣎⡁⠀⠈⠹⣏⡶⠞⢻⡄⠊⡄⣣⠞⠁⠌⠳⣆⡁⠠⠈⠐⠠⢁⠂⡜⢠⡿⠁⠀⠀⠀⠀⠀⠈⢷⡀⢁⠂⠠⢈⠐⠠⢀⣡⠾⠉⢷⣶⣤⣂⢸⡃⠀⠀⠀⠀⠀⣩⢿⣹⡟⣣⠚⡜⡻⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡾⠁⠈⠁⢰⡀⣠⠟⠀⠀⠈⢳⡌⡴⠉⡳⢄⡀⠁⠌⡙⠳⢮⣤⣥⢦⣱⡼⠋⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⣤⣤⣅⣦⡴⠳⠋⠁⠂⠀⠀⢹⣦⢍⡛⣛⠶⠶⠶⡴⢾⡟⡟⢣⠜⡢⢝⣰⡽⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⠀⣴⢫⡟⣾⣹⢧⣄⠀⠀⠀⠀⣻⠙⠶⣀⡠⠉⠑⣦⠀⠁⠠⣰⠞⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢳⣄⠀⠀⠀⠀⢀⣠⠴⠊⠉⣿⠳⠷⠾⣽⣮⣵⣶⣼⣼⠷⠾⠛⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢽⡸⢧⣻⢼⣣⢟⣮⢻⡆⠀⠀⣴⣇⠀⠀⠈⠁⠓⠊⠁⠀⢠⡾⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⣾⠲⠒⠋⠉⠀⠀⠀⠀⢈⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣏⡷⣹⣎⢷⣫⢞⣳⡟⠀⢰⣯⢟⣦⣤⣀⣀⠀⢀⣠⡼⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣆⠀⠀⠀⢀⡶⣞⡿⣹⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠷⣷⣚⣧⣛⣮⠷⠃⠀⠀⠻⠿⣼⣶⣯⡿⡿⠟⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⢿⣾⣻⣝⣧⣿⠽⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+# ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 import asyncio
 import os
@@ -102,6 +135,127 @@ FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 # API Cache
 _api_cache = {"data": None, "timestamp": None}
 CACHE_TTL = timedelta(minutes=5)
+
+
+# ============================================================================
+# Playwright version of scraping content
+# ============================================================================
+
+# Get the link
+async def extract_coupon_link(page):
+    # Navigate to the coupon board
+    await page.goto(COUPON_NOTICE_BOARD_URL, wait_until='domcontentloaded')
+
+    # Wait for the elements to be present and visible
+    # await page.wait_for_selector('a[class*="post_board_title"]')
+
+    # 1️⃣ Grab all “post_board_title” links on the page
+    locator = page.locator(
+        'a[class*="post_board_title"]',
+        has_text=THREAD_COUPON_TITLE,
+    )
+
+    # Wait for all elements to be present and visible
+    await locator.first.wait_for(state='visible')  # Increased timeout for dynamic content
+
+    elements = await locator.all()
+
+    # Extract href attributes into a list, Remove none, and remove duplicate
+    hrefs = sorted({await e.get_attribute('href') for e in elements} - {None}, reverse=True)
+
+    if hrefs[0]:
+        full_url = BASE_URL + hrefs[0]
+        log.info(f"Found coupon link: {full_url}")
+        return full_url
+    else:
+        log.info("No coupon link found")
+        return None
+
+
+async def get_sibling_text(page, target_text) -> Optional[str]:
+    # Step 1: Find the <p> that has a <span> containing target_text and get its next sibling
+    locator = page.locator('p').filter(has_text=target_text).first
+
+    # Ensure the coupon label element is actually found before proceeding
+    await locator.wait_for()
+
+    if not await locator.count():
+        log.info(f"❌ '{target_text}' not found in any <p>")
+        return None
+
+    # Looping engine from get the element of text target, loop until it show empty text then exit
+    # Not sure if this the best way tho, since any change on their post format it need to be updated
+    result = []
+    loop = True
+    sibling_count = 1
+
+    while loop:
+        # Step 2: Get the very next <p> sibling (adjacent sibling)
+        next_p_locator = locator.locator(f"xpath=following-sibling::p[{sibling_count}]")
+
+        if not await next_p_locator.count():
+            log.info("❌ No next <p> found")
+            return None
+
+        # Step 3: Extract text from span inside next <p>
+        # Instead of evaluate, use locator to find span and get text
+        span_inside_p = next_p_locator.locator('span').first
+
+        if not await span_inside_p.count():
+            log.info("❌ No span found in next <p>")
+            return None
+
+        span_text = await span_inside_p.text_content()
+        span_text = strip_invisible(span_text.strip())
+
+        if span_text and span_text != "":
+            result.append(span_text)
+            sibling_count += 1
+        else:
+            loop = False
+            # log.info("❌ Empty or no span text or empty content")
+
+    return '\n'.join(result)
+
+
+# Assuming you're already on the target page
+async def extract_coupon_code_and_stuff(page, full_url):
+    # Load page
+    await page.goto(full_url, wait_until='domcontentloaded')
+
+    # Coupon Code
+    coupon_code = await get_sibling_text(page, COUPON_CLAIM_HEADER)
+    # Coupon Date
+    coupon_reward = await get_sibling_text(page, COUPON_CLAIM_REWARD)
+    # Coupon Date
+    coupon_date = await get_sibling_text(page, COUPON_CLAIM_DATE)
+
+    # Coupon Image
+    coupon_image_locator = page.locator('div[class*="e-component-content-fit"] img')
+    coupon_image = None
+
+    if await coupon_image_locator.count() > 0:
+        try:
+            coupon_image = await coupon_image_locator.first.get_attribute('src')
+            if coupon_image:
+                log.info(f"✅ Coupon Image found: {coupon_image}")
+            else:
+                log.info("❌ Image element found but no src attribute")
+        except Exception as e:
+            log.info(f"❌ Error extracting image: {e}")
+    else:
+        log.info("❌ No image found with selector 'div[class*=\"e-component-content-fit\"] img'")
+
+    # Return both coupon code and image
+    if coupon_code:
+        return {
+            'coupon_code': coupon_code,
+            'coupon_reward': coupon_reward,
+            'coupon_date': coupon_date,
+            'coupon_image': coupon_image
+        }
+    else:
+        return None
 
 
 # ============================================================================
@@ -364,7 +518,7 @@ def _extract_coupon(blocks: List[Block]) -> CouponInfo:
                 if nxt.type == BlockType.IMAGE:
                     break
 
-            # 3. rewards – start after "쿠폰 보상" until blank line or next section
+            # 3. rewards – start after “쿠폰 보상” until blank line or next section
             reward_start = None
             for j in range(i + 1, n):
                 if (blocks[j].type == BlockType.TEXT
@@ -387,7 +541,7 @@ def _extract_coupon(blocks: List[Block]) -> CouponInfo:
                     elif rb.type == BlockType.IMAGE:
                         break
 
-            # 4. expiration – after "사용 기한"
+            # 4. expiration – after “사용 기한”
             for j in range(i + 1, n):
                 db = blocks[j]
                 if (db.type == BlockType.TEXT
@@ -441,7 +595,7 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
         log.info("No coupon code found")
         return None
 
-    # fallback image (cleaned) if we didn't find one before the header
+    # fallback image (cleaned) if we didn’t find one before the header
     if not info.image:
         info.image = _clean_url(post.get("repImageUrl"))
 
@@ -559,7 +713,7 @@ async def send_discord_embed_async(coupon_code: str, coupon_reward: str, coupon_
     embed.add_embed_field(name="Coupon Reward", value=f"```{coupon_reward}```", inline=False)
     embed.add_embed_field(name="Coupon Claim Period", value=embed_claim_date, inline=False)
     embed.add_embed_field(name="Coupon Claim Method", value=f"[Ingame or Click Here]({IOS_COUPON_URL})", inline=False)
-    embed.set_footer(text="ERPINI COUPON POSTER powered by 🬭🭰🥖", icon_url="https://i.imgur.com/eTEpq7I.png")
+    embed.set_footer(text="ERPINI COUPON POSTER powered by 🍬🍭🍰🥖", icon_url="https://i.imgur.com/eTEpq7I.png")
 
     # Download image async
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -611,20 +765,12 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
             result = await coupon_breaker.call(submit_coupon, page, uid, coupon_code)
 
             if COUPON_MESSAGE_COOLDOWN in result:
-                if attempt == MAX_RETRIES - 1:
-                    log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts (cooldown)")
-                    FAILED_UID_LIST.append(uid)
-                    return None
-
                 wait_time = (2 ** attempt) * 30
                 log.warning(
                     f"Cooldown detected for UID {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time}s...")
                 await asyncio.sleep(wait_time + random.uniform(0, 5))
-                continue  # Retry after cooldown
             else:
-                # Success or other message
                 return result
-
         except Exception as e:
             log.error(f"Error submitting coupon for UID {uid}: {e}")
             if attempt == MAX_RETRIES - 1:
@@ -632,7 +778,6 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
                 return None
             await asyncio.sleep(10)
 
-    # Should not reach here, but just in case
     log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
     FAILED_UID_LIST.append(uid)
     return None
@@ -643,36 +788,25 @@ async def main_coupon_submit(page, coupon_code, uids_to_process):
     log.info(f"Processing {len(uids_to_process)} UIDs for coupon: {coupon_code}")
 
     successful_uids = []
-    failed_this_run = []
 
     for uid in uids_to_process:
         result = await submit_coupon_with_retry(page, uid, coupon_code)
 
-        if result is None:
-            # Complete failure after retries
-            failed_this_run.append(uid)
-            log.error(f"✗ Failed UID {uid} - will retry next run")
-        elif COUPON_MESSAGE_ALREADY_USED in result:
-            log.info(f"✓ Coupon already used for UID: {uid}")
-            successful_uids.append(uid)
-            # Remove from failed list if exists
-            if uid in FAILED_UID_LIST:
-                FAILED_UID_LIST.remove(uid)
-        elif COUPON_MESSAGE_COOLDOWN not in result:
-            log.success(f"✓ Success for UID {uid}: {result}")
+        if result:
+            if COUPON_MESSAGE_ALREADY_USED in result:
+                log.info(f"✓ Coupon already used for UID: {uid}")
+            elif COUPON_MESSAGE_COOLDOWN not in result:
+                log.success(f"✓ Success for UID {uid}: {result}")
+
             successful_uids.append(uid)
             # Remove from failed list if exists
             if uid in FAILED_UID_LIST:
                 FAILED_UID_LIST.remove(uid)
 
-        # Delay between UIDs to avoid triggering rate limits
-        if uid != uids_to_process[-1]:  # Don't delay after last UID
-            await human_like_delay(5000, 10000)
+        # Delay between UIDs
+        await human_like_delay(5000, 10000)
 
     log.info(f"Processed UIDs: {len(successful_uids)}/{len(uids_to_process)}")
-
-    if failed_this_run:
-        log.warning(f"Failed this run: {failed_this_run}")
 
     # Update failed UIDs file
     if FAILED_UID_LIST:
@@ -680,7 +814,6 @@ async def main_coupon_submit(page, coupon_code, uids_to_process):
         log.warning(f"Failed UIDs written to file: {len(FAILED_UID_LIST)}")
     else:
         await write_lines_to_file_async([], FAILED_FILE_PATH)
-        log.info("No failed UIDs - cleared failed_id.txt")
 
 
 # ============================================================================
@@ -727,9 +860,8 @@ async def couponstance():
     1. Load state async (parallel)
     2. Check coupon via cached API
     3. Determine action (decision variables)
-    4. Send Discord notification FIRST (if new coupon)
-    5. Single browser launch if needed
-    6. Parallel post-processing
+    4. Single browser launch if needed
+    5. Parallel post-processing
     """
     log.info("🚀 Starting coupon check cycle...")
 
@@ -793,48 +925,41 @@ async def couponstance():
         await write_lines_to_file_async([], FAILED_FILE_PATH)
 
     # ========================================
-    # STEP 4: Discord Notification (Immediate for new coupons)
+    # STEP 4: Browser Operations (Single Instance)
     # ========================================
-    # Send Discord notification BEFORE submission attempts
-    if should_post_discord:
-        log.info("📤 Sending Discord notification for new coupon...")
-        try:
-            await send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image)
-            log.success("✅ Discord notification sent!")
-        except Exception as e:
-            log.error(f"❌ Failed to send Discord notification: {e}")
-
-    # ========================================
-    # STEP 5: Browser Operations (Single Instance)
-    # ========================================
-    browser_task_completed = False
-
     if should_submit and uids_to_process:
         log.info(f"🌐 Launching browser for {len(uids_to_process)} UIDs...")
         async with BrowserManager() as bm:
             page = await bm.create_page()
             await main_coupon_submit(page, coupon_code, uids_to_process)
-        browser_task_completed = True
 
     # ========================================
-    # STEP 6: State File Updates
+    # STEP 5: Post-Processing (Parallel)
     # ========================================
+    tasks = []
+
+    # Discord notification
+    if should_post_discord:
+        tasks.append(send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image))
+
+    # State file updates
     if is_new_coupon:
-        await asyncio.gather(
-            write_line_to_file_async(coupon_code, COUPON_FILE_PATH),
-            append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH)
-        )
+        tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
+        tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
+
+    # Execute all tasks in parallel
+    if tasks:
+        await asyncio.gather(*tasks)
 
     # ========================================
-    # STEP 7: Final Logging
+    # STEP 6: Final Logging
     # ========================================
     if is_new_coupon:
         log.success("✅ New coupon processed successfully!")
     elif is_same_coupon and needs_retry:
-        if browser_task_completed:
-            log.success("✅ Retry cycle completed!")
-        else:
-            log.info("ℹ️ Retry skipped (no browser submission)")
+        log.success("✅ Retry cycle completed!")
+
+    # log.info("=" * 60)
 
 
 # ============================================================================
