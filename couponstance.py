@@ -124,6 +124,13 @@ POST_COUPON = env.bool("POST_COUPON")
 POST_DISCORD = env.bool("POST_DISCORD")
 DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 
+# Proxy Config
+USE_PUBLIC_PROXY = env.bool("USE_PUBLIC_PROXY", default=False)
+PROXY_COUNTRIES = env.list("PROXY_COUNTRIES", default=["US", "KR", "JP"])  # e.g., ["US", "KR", "JP"]
+PROXY_COUNTRIES = [c.strip().upper() for c in PROXY_COUNTRIES if c.strip()]
+# Proxy List provided by https://github.com/proxifly/free-proxy-list
+PROXY_LIST_URL = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
+
 # File paths
 COUPON_FILE_NAME = "latest_coupon.txt"
 COUPON_FILE_PATH = os.path.join(script_dir, COUPON_FILE_NAME)
@@ -135,6 +142,145 @@ FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 # API Cache
 _api_cache = {"data": None, "timestamp": None}
 CACHE_TTL = timedelta(minutes=5)
+
+# Proxy Cache
+_proxy_cache = {"proxies": [], "timestamp": None}
+PROXY_CACHE_TTL = timedelta(hours=1)
+
+
+# ============================================================================
+# PROXY MANAGER
+# ============================================================================
+@dataclass
+class ProxyInfo:
+    protocol: str
+    host: str
+    port: int
+    anonymity: str
+    country: str
+
+    @property
+    def url(self) -> str:
+        return f"{self.protocol}://{self.host}:{self.port}"
+
+    @property
+    def rank(self) -> int:
+        """Rank proxies: Elite=3, Anonymous=2, Transparent=1"""
+        return {"elite": 3, "anonymous": 2, "transparent": 1}.get(self.anonymity.lower(), 0)
+
+
+class ProxyManager:
+    """Manages proxy fetching, filtering, and rotation"""
+
+    def __init__(self):
+        self.proxies: List[ProxyInfo] = []
+        self.current_index = 0
+        self.used_proxies: set = set()
+
+    async def load_proxies(self) -> bool:
+        """Fetch and cache proxy list"""
+        now = datetime.now()
+
+        # Check cache
+        if (_proxy_cache["proxies"] and _proxy_cache["timestamp"] and
+                now - _proxy_cache["timestamp"] < PROXY_CACHE_TTL):
+            log.debug("Using cached proxy list")
+            self.proxies = _proxy_cache["proxies"]
+            return len(self.proxies) > 0
+
+        log.info("🔄 Fetching fresh proxy list...")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(PROXY_LIST_URL)
+                resp.raise_for_status()
+                data = resp.json()
+
+            # Parse and filter proxies
+            raw_proxies = []
+            for item in data:
+                try:
+                    proxy = ProxyInfo(
+                        protocol=item.get("protocol", "http"),
+                        host=item.get("ip", ""),
+                        port=int(item.get("port", 0)),
+                        anonymity=item.get("anonymity", "transparent"),
+                        country=item.get("country", "").upper()
+                    )
+
+                    # Filter by country if specified
+                    if PROXY_COUNTRIES and proxy.country not in PROXY_COUNTRIES:
+                        continue
+
+                    raw_proxies.append(proxy)
+                except (ValueError, KeyError) as e:
+                    log.debug(f"Skipping invalid proxy entry: {e}")
+                    continue
+
+            # Sort by rank (Elite > Anonymous > Transparent) and shuffle within rank
+            raw_proxies.sort(key=lambda p: p.rank, reverse=True)
+
+            # Group by rank and shuffle each group
+            from itertools import groupby
+            grouped = []
+            for rank, group in groupby(raw_proxies, key=lambda p: p.rank):
+                group_list = list(group)
+                random.shuffle(group_list)
+                grouped.extend(group_list)
+
+            self.proxies = grouped
+            _proxy_cache["proxies"] = self.proxies
+            _proxy_cache["timestamp"] = now
+
+            log.success(f"✅ Loaded {len(self.proxies)} proxies")
+            if self.proxies:
+                log.info(f"📊 Proxy ranks: Elite={sum(1 for p in self.proxies if p.rank == 3)}, "
+                         f"Anonymous={sum(1 for p in self.proxies if p.rank == 2)}, "
+                         f"Transparent={sum(1 for p in self.proxies if p.rank == 1)}")
+
+            return len(self.proxies) > 0
+
+        except Exception as e:
+            log.error(f"❌ Failed to load proxies: {e}")
+            return False
+
+    def get_next_proxy(self) -> Optional[ProxyInfo]:
+        """Get next proxy in rotation (round-robin with used tracking)"""
+        if not self.proxies:
+            return None
+
+        # If we've used all proxies, reset the used set
+        if len(self.used_proxies) >= len(self.proxies):
+            log.info("♻️ All proxies used, resetting rotation")
+            self.used_proxies.clear()
+
+        # Find next unused proxy
+        start_index = self.current_index
+        attempts = 0
+
+        while attempts < len(self.proxies):
+            proxy = self.proxies[self.current_index]
+            self.current_index = (self.current_index + 1) % len(self.proxies)
+
+            if proxy.url not in self.used_proxies:
+                self.used_proxies.add(proxy.url)
+                log.info(f"🔄 Using proxy: {proxy.url} ({proxy.anonymity}, {proxy.country})")
+                return proxy
+
+            attempts += 1
+
+        # Fallback: return any proxy
+        proxy = self.proxies[self.current_index]
+        self.current_index = (self.current_index + 1) % len(self.proxies)
+        return proxy
+
+    def mark_failed(self, proxy_url: str):
+        """Mark proxy as failed (optional: could implement removal)"""
+        log.warning(f"⚠️ Proxy failed: {proxy_url}")
+        # Could implement: remove from list, add to blacklist, etc.
+
+
+# Global proxy manager
+proxy_manager = ProxyManager()
 
 
 # ============================================================================
@@ -149,7 +295,7 @@ async def extract_coupon_link(page):
     # Wait for the elements to be present and visible
     # await page.wait_for_selector('a[class*="post_board_title"]')
 
-    # 1️⃣ Grab all “post_board_title” links on the page
+    # 1️⃣ Grab all "post_board_title" links on the page
     locator = page.locator(
         'a[class*="post_board_title"]',
         has_text=THREAD_COUPON_TITLE,
@@ -518,7 +664,7 @@ def _extract_coupon(blocks: List[Block]) -> CouponInfo:
                 if nxt.type == BlockType.IMAGE:
                     break
 
-            # 3. rewards – start after “쿠폰 보상” until blank line or next section
+            # 3. rewards – start after "쿠폰 보상" until blank line or next section
             reward_start = None
             for j in range(i + 1, n):
                 if (blocks[j].type == BlockType.TEXT
@@ -541,7 +687,7 @@ def _extract_coupon(blocks: List[Block]) -> CouponInfo:
                     elif rb.type == BlockType.IMAGE:
                         break
 
-            # 4. expiration – after “사용 기한”
+            # 4. expiration – after "사용 기한"
             for j in range(i + 1, n):
                 db = blocks[j]
                 if (db.type == BlockType.TEXT
@@ -595,7 +741,7 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
         log.info("No coupon code found")
         return None
 
-    # fallback image (cleaned) if we didn’t find one before the header
+    # fallback image (cleaned) if we didn't find one before the header
     if not info.image:
         info.image = _clean_url(post.get("repImageUrl"))
 
@@ -783,25 +929,41 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
     return None
 
 
-async def main_coupon_submit(page, coupon_code, uids_to_process):
-    """Main coupon submission logic - sequential processing"""
+async def main_coupon_submit(bm: 'BrowserManager', coupon_code: str, uids_to_process: List[str]):
+    """Main coupon submission logic with rolling proxies"""
     log.info(f"Processing {len(uids_to_process)} UIDs for coupon: {coupon_code}")
 
     successful_uids = []
 
     for uid in uids_to_process:
-        result = await submit_coupon_with_retry(page, uid, coupon_code)
+        # Get next proxy if enabled
+        proxy_info = None
+        if USE_PUBLIC_PROXY and proxy_manager.proxies:
+            proxy_info = proxy_manager.get_next_proxy()
 
-        if result:
-            if COUPON_MESSAGE_ALREADY_USED in result:
-                log.info(f"✓ Coupon already used for UID: {uid}")
-            elif COUPON_MESSAGE_COOLDOWN not in result:
-                log.success(f"✓ Success for UID {uid}: {result}")
+        # Create new page with proxy for this UID
+        page = await bm.create_page(proxy_info)
 
-            successful_uids.append(uid)
-            # Remove from failed list if exists
-            if uid in FAILED_UID_LIST:
-                FAILED_UID_LIST.remove(uid)
+        try:
+            result = await submit_coupon_with_retry(page, uid, coupon_code)
+
+            if result:
+                if COUPON_MESSAGE_ALREADY_USED in result:
+                    log.info(f"✓ Coupon already used for UID: {uid}")
+                elif COUPON_MESSAGE_COOLDOWN not in result:
+                    log.success(f"✓ Success for UID {uid}: {result}")
+
+                successful_uids.append(uid)
+                # Remove from failed list if exists
+                if uid in FAILED_UID_LIST:
+                    FAILED_UID_LIST.remove(uid)
+        except Exception as e:
+            log.error(f"Error processing UID {uid}: {e}")
+            if proxy_info:
+                proxy_manager.mark_failed(proxy_info.url)
+        finally:
+            # Close page after each UID to free resources
+            await page.close()
 
         # Delay between UIDs
         await human_like_delay(5000, 10000)
@@ -820,12 +982,12 @@ async def main_coupon_submit(page, coupon_code, uids_to_process):
 # BROWSER MANAGER
 # ============================================================================
 class BrowserManager:
-    """Context manager for single browser instance"""
+    """Context manager for single browser instance with proxy support"""
 
     def __init__(self):
         self.browser = None
         self.playwright = None
-        self.context = None
+        self.contexts = []
 
     async def __aenter__(self):
         self.playwright = await Stealth().use_async(async_playwright()).__aenter__()
@@ -833,22 +995,42 @@ class BrowserManager:
             headless=True,
             args=['--no-sandbox', '--disable-setuid-sandbox']
         )
-        self.context = await self.browser.new_context(
-            viewport=ViewportSize(width=1280, height=720)
-        )
         return self
 
     async def __aexit__(self, *args):
-        if self.context:
-            await self.context.close()
+        # Close all contexts
+        for context in self.contexts:
+            try:
+                await context.close()
+            except:
+                pass
+
         if self.browser:
             await self.browser.close()
-        #if self.playwright:
-        #    await self.playwright.__aexit__(*args)
 
-    async def create_page(self):
-        """Create a new page in existing context"""
-        return await self.context.new_page()
+    async def create_page(self, proxy_info: Optional[ProxyInfo] = None):
+        """Create a new page with optional proxy in a new context"""
+        context_options = {
+            'viewport': ViewportSize(width=1280, height=720),
+            'user_agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/131.0.0.0 Safari/537.36'
+            )
+        }
+
+        # Add proxy if provided
+        if proxy_info:
+            context_options['proxy'] = {
+                'server': proxy_info.url
+            }
+            log.debug(f"Creating context with proxy: {proxy_info.url}")
+
+        # Create new context for each page to isolate proxy settings
+        context = await self.browser.new_context(**context_options)
+        self.contexts.append(context)
+
+        return await context.new_page()
 
 
 # ============================================================================
@@ -856,27 +1038,42 @@ class BrowserManager:
 # ============================================================================
 async def couponstance():
     """
-    Optimized main function:
+    Optimized main function with proxy support:
     1. Load state async (parallel)
-    2. Check coupon via cached API
-    3. Determine action (decision variables)
-    4. Single browser launch if needed
-    5. Parallel post-processing
+    2. Load proxies if enabled
+    3. Check coupon via cached API
+    4. Determine action (decision variables)
+    5. Single browser launch with rolling proxies
+    6. Parallel post-processing
     """
     log.info("🚀 Starting coupon check cycle...")
 
     # ========================================
-    # STEP 1: Load State (Parallel)
+    # STEP 1: Load State & Proxies (Parallel)
     # ========================================
-    latest_coupon, past_coupons_list, failed_uids = await asyncio.gather(
+    tasks = [
         load_line_from_file_async(COUPON_FILE_PATH),
         load_lines_from_file_async(PAST_COUPON_FILE_PATH),
         load_lines_from_file_async(FAILED_FILE_PATH)
-    )
+    ]
+
+    # Load proxies if enabled
+    if USE_PUBLIC_PROXY:
+        tasks.append(proxy_manager.load_proxies())
+        latest_coupon, past_coupons_list, failed_uids, proxy_loaded = await asyncio.gather(*tasks)
+        if not proxy_loaded:
+            log.warning("⚠️ Failed to load proxies, continuing without proxy support")
+    else:
+        latest_coupon, past_coupons_list, failed_uids = await asyncio.gather(*tasks)
 
     past_coupons = set(past_coupons_list)
     FAILED_UID_LIST.clear()
     FAILED_UID_LIST.extend(failed_uids)
+
+    if USE_PUBLIC_PROXY and proxy_manager.proxies:
+        log.info(f"🌐 Proxy support enabled with {len(proxy_manager.proxies)} proxies")
+        if PROXY_COUNTRIES:
+            log.info(f"📍 Filtering by countries: {', '.join(PROXY_COUNTRIES)}")
 
     # ========================================
     # STEP 2: Fetch Latest Coupon (Cached API)
@@ -904,7 +1101,7 @@ async def couponstance():
     should_post_discord = POST_DISCORD and DISCORD_WEBHOOK_URL and is_new_coupon
 
     uids_to_process = []
-    tasks = []
+    file_tasks = []
 
     # Decision logic
     if is_new_coupon:
@@ -920,8 +1117,8 @@ async def couponstance():
             FAILED_UID_LIST.clear()  # Clear failed for new coupon
             await write_lines_to_file_async([], FAILED_FILE_PATH)  # Clear failed file immediately
 
-        tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
-        tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
+        file_tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
+        file_tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
     elif needs_resubmission:
         # For retries, use coupon from latest_coupon.txt.
         if failed_uids and POST_COUPON:
@@ -937,20 +1134,19 @@ async def couponstance():
         return
 
     # ========================================
-    # STEP 4: Browser Operations (Single Instance)
+    # STEP 4: Browser Operations (Rolling Proxies)
     # ========================================
-    if ( needs_submission or needs_resubmission ) and uids_to_process:
+    if (needs_submission or needs_resubmission) and uids_to_process:
         log.info(f"🌐 Launching browser for {len(uids_to_process)} UIDs...")
         async with BrowserManager() as bm:
-            page = await bm.create_page()
-            await main_coupon_submit(page, coupon_code, uids_to_process)
+            await main_coupon_submit(bm, coupon_code, uids_to_process)
 
     # ========================================
     # STEP 5: Post-Processing (Parallel)
     # ========================================
     # Execute all tasks in parallel
-    if tasks:
-        await asyncio.gather(*tasks)
+    if file_tasks:
+        await asyncio.gather(*file_tasks)
 
     # ========================================
     # STEP 6: Final Logging
