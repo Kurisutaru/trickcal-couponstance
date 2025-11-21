@@ -920,12 +920,14 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
         except Exception as e:
             log.error(f"Error submitting coupon for UID {uid}: {e}")
             if attempt == MAX_RETRIES - 1:
-                FAILED_UID_LIST.append(uid)
+                if uid not in FAILED_UID_LIST:
+                    FAILED_UID_LIST.append(uid)
                 return None
             await asyncio.sleep(10)
 
     log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
-    FAILED_UID_LIST.append(uid)
+    if uid not in FAILED_UID_LIST:
+        FAILED_UID_LIST.append(uid)
     return None
 
 
