@@ -204,7 +204,7 @@ class ProxyManager:
                         host=item.get("ip", ""),
                         port=int(item.get("port", 0)),
                         anonymity=item.get("anonymity", "transparent"),
-                        country=item.get("country", "").upper()
+                        country=item.get("geolocation", "").get("country", "").upper()
                     )
 
                     # Filter by country if specified
