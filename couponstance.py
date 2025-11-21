@@ -47,6 +47,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
+from itertools import groupby
 from typing import Optional, Dict, Any, List
 from urllib.parse import urlsplit, urlunsplit
 
@@ -59,6 +60,7 @@ from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from loguru import logger as log
+from marshmallow.fields import Boolean
 from playwright.async_api import async_playwright, ViewportSize
 from playwright_stealth import Stealth
 
@@ -126,7 +128,7 @@ DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 
 # Proxy Config
 USE_PUBLIC_PROXY = env.bool("USE_PUBLIC_PROXY", default=False)
-PROXY_COUNTRIES = env.list("PROXY_COUNTRIES", default=["US", "KR", "JP"])  # e.g., ["US", "KR", "JP"]
+PROXY_COUNTRIES = env.list("PROXY_COUNTRIES", default=[])  # e.g., ["US", "KR", "JP"]
 PROXY_COUNTRIES = [c.strip().upper() for c in PROXY_COUNTRIES if c.strip()]
 # Proxy List provided by https://github.com/proxifly/free-proxy-list
 PROXY_LIST_URL = "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/all/data.json"
@@ -146,7 +148,6 @@ CACHE_TTL = timedelta(minutes=5)
 # Proxy Cache
 _proxy_cache = {"proxies": [], "timestamp": None}
 PROXY_CACHE_TTL = timedelta(hours=1)
-
 
 # ============================================================================
 # PROXY MANAGER
@@ -172,10 +173,45 @@ class ProxyInfo:
 class ProxyManager:
     """Manages proxy fetching, filtering, and rotation"""
 
+    TEST_URL = 'https://coupon.a.prod.service.trickcal.io/'
+
     def __init__(self):
         self.proxies: List[ProxyInfo] = []
         self.current_index = 0
         self.used_proxies: set = set()
+        self.test_url = self.TEST_URL
+
+    async def _test_proxy(self, proxy: ProxyInfo, timeout: float = 10.0) -> bool:
+        """Async test single proxy against TEST_URL."""
+        protocol = proxy.protocol.lower().strip()
+        if protocol not in ['http', 'https', 'socks5']:
+            return False
+
+        # Build correct proxy URL for httpx (ignore proxy.protocol scheme)
+        if protocol == 'socks5':
+            proxy_url = f"socks5://{proxy.host}:{proxy.port}"
+        else:  # http/https proxies use 'http://' scheme
+            proxy_url = f"http://{proxy.host}:{proxy.port}"
+
+        try:
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=timeout, verify=False) as client:
+                resp = await client.get(self.test_url)
+                return 200 <= resp.status_code < 400
+        except Exception:
+            return False
+
+    async def _test_proxies_batch(self, proxies: List[ProxyInfo], timeout: float = 10.0) -> List[ProxyInfo]:
+        """Batch test proxies concurrently with semaphore to limit load."""
+        semaphore = asyncio.Semaphore(20)  # Max 20 concurrent tests
+
+        async def test_one(proxy: ProxyInfo) -> Optional[ProxyInfo]:
+            async with semaphore:
+                return proxy if await self._test_proxy(proxy, timeout) else None
+
+        tasks = [test_one(p) for p in proxies]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        working = [r for r in results if isinstance(r, ProxyInfo)]
+        return working
 
     async def load_proxies(self) -> bool:
         """Fetch and cache proxy list"""
@@ -189,6 +225,7 @@ class ProxyManager:
             return len(self.proxies) > 0
 
         log.info("🔄 Fetching fresh proxy list...")
+        candidates: List[ProxyInfo] = []
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(PROXY_LIST_URL)
@@ -196,7 +233,6 @@ class ProxyManager:
                 data = resp.json()
 
             # Parse and filter proxies
-            raw_proxies = []
             for item in data:
                 try:
                     proxy = ProxyInfo(
@@ -204,25 +240,40 @@ class ProxyManager:
                         host=item.get("ip", ""),
                         port=int(item.get("port", 0)),
                         anonymity=item.get("anonymity", "transparent"),
-                        country=item.get("geolocation", "").get("country", "").upper()
+                        country=item.get("geolocation", {}).get("country", "").upper()  # Fixed: {} default
                     )
+
+                    # Basic validation
+                    if not proxy.host or proxy.port <= 0:
+                        continue
+
+                    # Filter only https and socks5 (FIXED: added () to lower())
+                    #if proxy.protocol.lower() not in ["https", "socks5"]:
+                    #    continue
 
                     # Filter by country if specified
                     if PROXY_COUNTRIES and proxy.country not in PROXY_COUNTRIES:
                         continue
 
-                    raw_proxies.append(proxy)
+                    candidates.append(proxy)
                 except (ValueError, KeyError) as e:
                     log.debug(f"Skipping invalid proxy entry: {e}")
                     continue
 
+            # Batch test candidates
+            if candidates:
+                log.info(f"🧪 Testing {len(candidates)} candidate proxies...")
+                working_proxies = await self._test_proxies_batch(candidates, timeout=10.0)
+                log.info(f"✅ {len(working_proxies)}/{len(candidates)} proxies passed test")
+            else:
+                working_proxies = []
+
             # Sort by rank (Elite > Anonymous > Transparent) and shuffle within rank
-            raw_proxies.sort(key=lambda p: p.rank, reverse=True)
+            working_proxies.sort(key=lambda p: p.rank, reverse=True)
 
             # Group by rank and shuffle each group
-            from itertools import groupby
             grouped = []
-            for rank, group in groupby(raw_proxies, key=lambda p: p.rank):
+            for rank, group in groupby(working_proxies, key=lambda p: p.rank):
                 group_list = list(group)
                 random.shuffle(group_list)
                 grouped.extend(group_list)
