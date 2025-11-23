@@ -790,6 +790,13 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
             result = await coupon_breaker.call(submit_coupon, page, uid, coupon_code)
 
             if COUPON_MESSAGE_COOLDOWN in result:
+                if attempt == MAX_RETRIES - 1:
+                    # Last attempt failed due to cooldown - mark as failed
+                    log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts (cooldown)")
+                    if uid not in FAILED_UID_LIST:
+                        FAILED_UID_LIST.append(uid)
+                    return None
+
                 wait_time = (2 ** attempt) * 30
                 log.warning(
                     f"Cooldown detected for UID {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time}s...")
