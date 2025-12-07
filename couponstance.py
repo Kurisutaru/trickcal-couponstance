@@ -59,8 +59,7 @@ from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from loguru import logger as log
-from playwright.async_api import async_playwright, ViewportSize
-from playwright_stealth import Stealth
+import nodriver as uc
 
 # Load the .env
 env.read_env()
@@ -128,6 +127,9 @@ DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
 USE_PROXY = env.bool("USE_PROXY", default=False)
 PROXY_URL = env.str("PROXY_URL")
 
+# Browser Config
+BROWSER_EXECUTABLE_PATH = env.str("BROWSER_EXECUTABLE_PATH", default=None)
+
 # File paths
 COUPON_FILE_NAME = "latest_coupon.txt"
 COUPON_FILE_PATH = os.path.join(script_dir, COUPON_FILE_NAME)
@@ -169,7 +171,7 @@ class ProxyInfo:
 # Get the link
 async def extract_coupon_link(page):
     # Navigate to the coupon board
-    await page.goto(COUPON_NOTICE_BOARD_URL, wait_until='domcontentloaded')
+    await page.get(COUPON_NOTICE_BOARD_URL)
 
     # Wait for the elements to be present and visible
     # await page.wait_for_selector('a[class*="post_board_title"]')
@@ -766,19 +768,23 @@ async def human_like_delay(min_ms=100, max_ms=500):
 async def submit_coupon(page, uid, coupon_code):
     """Submit coupon for a single UID"""
     log.info(f"Submitting coupon for UID: {uid}")
-    await page.goto(IOS_COUPON_URL)
+    await page.get(IOS_COUPON_URL)
 
-    await human_like_delay(500, 1500)
-    await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-    await page.locator('#UserId').type(uid, delay=random.randint(50, 150))
-    await human_like_delay(300, 1000)
-    await page.locator('#CouponCode').type(coupon_code, delay=random.randint(50, 150))
+    user_input = await page.select("#UserId")
+    coupon_input = await page.select("#CouponCode")
+    submit_btn = await page.select('button[onclick="CouponSubmit()"]')
 
-    await human_like_delay(3000, 5000)
-    await page.click('button[onclick="CouponSubmit()"]')
-    await human_like_delay(1000, 2000)
+    await human_like_delay(1000, 3000)
+    await user_input.send_keys(uid)
+    await human_like_delay(1000, 3000)
+    await coupon_input.send_keys(coupon_code)
+    await human_like_delay(1000, 3000)
 
-    result = await page.locator('#result-message').text_content()
+    await submit_btn.click()
+    await human_like_delay(1000, 3000)
+
+    result_el = await page.select("#result-message")
+    result = result_el.text
     log.info(f"Result for UID {uid}: {result}")
     return result
 
@@ -818,14 +824,14 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
 
 
 async def main_coupon_submit(bm: 'BrowserManager', coupon_code: str, uids_to_process: List[str]):
-    """Main coupon submission logic with rolling proxies"""
+    """Main coupon submission logic"""
     log.info(f"Processing {len(uids_to_process)} UIDs for coupon: {coupon_code}")
 
     successful_uids = []
 
+    page = await bm.create_page()
+
     for uid in uids_to_process:
-        # Create new page with proxy for this UID
-        page = await bm.create_page()
 
         try:
             result = await submit_coupon_with_retry(page, uid, coupon_code)
@@ -844,7 +850,8 @@ async def main_coupon_submit(bm: 'BrowserManager', coupon_code: str, uids_to_pro
             log.error(f"Error processing UID {uid}: {e}")
         finally:
             # Close page after each UID to free resources
-            await page.close()
+            # await page.context.close()
+            continue
 
         # Delay between UIDs
         await human_like_delay(5000, 10000)
@@ -863,48 +870,43 @@ async def main_coupon_submit(bm: 'BrowserManager', coupon_code: str, uids_to_pro
 # BROWSER MANAGER
 # ============================================================================
 class BrowserManager:
-    """Context manager for single browser instance with proxy support"""
+    """Context manager for NoDriver with optional proxy"""
 
     def __init__(self):
         self.browser = None
-        self.playwright = None
-        self.contexts = []
+        self.context = None
 
     async def __aenter__(self):
-        self.playwright = await Stealth().use_async(async_playwright()).__aenter__()
-        self.browser = await self.playwright.firefox.launch(
-            headless=False,
-            args=['--no-sandbox', '--disable-setuid-sandbox']
-        )
+        launch_kwargs = {
+            "headless": False,
+            "args": [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        }
+
+        # Add proxy if needed
+        if USE_PROXY and PROXY_URL:
+            launch_kwargs["args"].append(f"--proxy-server={PROXY_URL}")
+
+        # Add executable_path only if provided
+        if BROWSER_EXECUTABLE_PATH:
+            launch_kwargs["browser_executable_path"] = BROWSER_EXECUTABLE_PATH
+
+        self.browser = await uc.start(**launch_kwargs)
+
         return self
 
     async def __aexit__(self, *args):
-        # Close all contexts
-        for context in self.contexts:
-            try:
-                await context.close()
-            except:
-                pass
-
         if self.browser:
-            await self.browser.close()
+            self.browser.stop()
 
-    async def create_page(self = None):
-        """Create a new page with optional proxy in a new context"""
-        context_options = {}
+    async def create_page(self):
+        """Creates new tab (isolated) like Playwright new_context().new_page()"""
+        page = await self.browser.get("about:blank")
+        return page
 
-        # Add proxy if provided
-        if USE_PROXY:
-            context_options['proxy'] = {
-                'server': PROXY_URL
-            }
-            log.debug(f"Creating context with proxy: {PROXY_URL}")
-
-        # Create new context for each page to isolate proxy settings
-        context = await self.browser.new_context(**context_options)
-        self.contexts.append(context)
-
-        return await context.new_page()
 
 
 # ============================================================================
