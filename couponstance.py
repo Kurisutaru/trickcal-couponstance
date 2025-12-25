@@ -53,13 +53,13 @@ from urllib.parse import urlsplit, urlunsplit
 import aiofiles
 import filetype
 import httpx
+import nodriver as uc
 import orjson
 import unicodedata
 from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from loguru import logger as log
-import nodriver as uc
 
 # Load the .env
 env.read_env()
@@ -114,8 +114,15 @@ THREAD_COUPON_TITLE = "쿠폰"
 COUPON_CLAIM_HEADER = "쿠폰 코드(대소문자를 구분합니다)"
 COUPON_CLAIM_REWARD = "쿠폰 보상"
 COUPON_CLAIM_DATE = "사용 기한"
-COUPON_MESSAGE_COOLDOWN = "쿠폰 입력 쿨타임 중입니다.잠시 후 다시 이용해주세요."
-COUPON_MESSAGE_ALREADY_USED = "이미 사용된 쿠폰입니다."
+
+EMOJI_SUCCESS = "✔️"
+EMOJI_FAILED = "❌"
+EMOJI_WARNING = "⚠️"
+EMOJI_RETRY = "♻️"
+EMOJI_BROWSER = "🌐"
+EMOJI_START = "🚀"
+EMOJI_POP = "🎉"
+
 MAX_RETRIES = 3
 
 # Config
@@ -141,6 +148,110 @@ FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 # API Cache
 _api_cache = {"data": None, "timestamp": None}
 CACHE_TTL = timedelta(minutes=5)
+
+
+# ============================================================================
+# COUPON PARSER RESULT FROM SUBMIT COUPON
+# ============================================================================
+
+class CouponResultType(Enum):
+    """Categories of coupon submission results"""
+    SUCCESS = "success"  # Coupon successfully claimed
+    ALREADY_USED = "already_used"  # Coupon was already used (not an error)
+    COOLDOWN = "cooldown"  # Rate limited, needs retry
+    INVALID_UID = "invalid_uid"  # UID doesn't exist, mark as failed
+    INVALID_UID2 = "invalid_uid2"  # UID doesn't exist, mark as failed, Another Variant
+    INVALID_COUPON = "invalid_coupon"  # Coupon code invalid
+    EXPIRED = "expired"  # Coupon expired
+    UNKNOWN_ERROR = "unknown_error"  # Unexpected response
+
+
+@dataclass
+class CouponSubmissionResult:
+    """Structured result from coupon submission"""
+    uid: str
+    coupon_code: str
+    result_type: CouponResultType
+    message: str
+    should_retry: bool = False
+    should_mark_failed: bool = False
+
+    @property
+    def is_success(self) -> bool:
+        """True if coupon was claimed or already used (both are OK states)"""
+        return self.result_type in (CouponResultType.SUCCESS, CouponResultType.ALREADY_USED)
+
+    @property
+    def needs_action(self) -> bool:
+        """True if this result requires follow-up action"""
+        return self.should_retry or self.should_mark_failed
+
+
+class CouponResponseParser:
+    """Parses Korean coupon responses into structured results"""
+
+    # Response patterns - each type can have multiple message variations
+    PATTERNS = {
+        CouponResultType.SUCCESS: [
+            "쿠폰 보상이 지급되었습니다.",
+        ],
+        CouponResultType.ALREADY_USED: [
+            "이미 사용된 쿠폰입니다.",
+        ],
+        CouponResultType.COOLDOWN: [
+            "쿠폰 입력 쿨타임 중입니다",
+        ],
+        CouponResultType.INVALID_UID: [
+            "올바르지 않은 UID 입니다.",
+            "잘못된 UID입니다. UID를 확인해주시기 바랍니다.",
+        ],
+        CouponResultType.INVALID_COUPON: [
+            "유효하지 않은 쿠폰",
+        ],
+        CouponResultType.EXPIRED: [
+            "기간이 만료",
+        ],
+    }
+
+    @classmethod
+    def parse(cls, uid: str, coupon_code: str, message: str) -> CouponSubmissionResult:
+        """Parse raw message into structured result"""
+
+        # Check each result type's patterns
+        for result_type, patterns in cls.PATTERNS.items():
+            for pattern in patterns:
+                if pattern in message:
+                    return cls._create_result(uid, coupon_code, result_type, message)
+
+        # Unknown response
+        return CouponSubmissionResult(
+            uid=uid,
+            coupon_code=coupon_code,
+            result_type=CouponResultType.UNKNOWN_ERROR,
+            message=message,
+            should_retry=False,
+            should_mark_failed=True
+        )
+
+    @classmethod
+    def _create_result(cls, uid: str, coupon_code: str,
+                       result_type: CouponResultType, message: str) -> CouponSubmissionResult:
+        """Create result with appropriate retry/fail flags"""
+
+        should_retry = result_type == CouponResultType.COOLDOWN
+        should_mark_failed = result_type in (
+            CouponResultType.INVALID_UID,
+            CouponResultType.INVALID_COUPON
+        )
+
+        return CouponSubmissionResult(
+            uid=uid,
+            coupon_code=coupon_code,
+            result_type=result_type,
+            message=message,
+            should_retry=should_retry,
+            should_mark_failed=should_mark_failed
+        )
 
 
 # ============================================================================
@@ -207,7 +318,7 @@ async def get_sibling_text(page, target_text) -> Optional[str]:
     await locator.wait_for()
 
     if not await locator.count():
-        log.info(f"❌ '{target_text}' not found in any <p>")
+        log.info(f"{EMOJI_FAILED} '{target_text}' not found in any <p>")
         return None
 
     # Looping engine from get the element of text target, loop until it show empty text then exit
@@ -221,7 +332,7 @@ async def get_sibling_text(page, target_text) -> Optional[str]:
         next_p_locator = locator.locator(f"xpath=following-sibling::p[{sibling_count}]")
 
         if not await next_p_locator.count():
-            log.info("❌ No next <p> found")
+            log.info("{EMOJI_FAILED} No next <p> found")
             return None
 
         # Step 3: Extract text from span inside next <p>
@@ -229,7 +340,7 @@ async def get_sibling_text(page, target_text) -> Optional[str]:
         span_inside_p = next_p_locator.locator('span').first
 
         if not await span_inside_p.count():
-            log.info("❌ No span found in next <p>")
+            log.info("{EMOJI_FAILED} No span found in next <p>")
             return None
 
         span_text = await span_inside_p.text_content()
@@ -240,7 +351,7 @@ async def get_sibling_text(page, target_text) -> Optional[str]:
             sibling_count += 1
         else:
             loop = False
-            # log.info("❌ Empty or no span text or empty content")
+            # log.info("{EMOJI_FAILED} Empty or no span text or empty content")
 
     return '\n'.join(result)
 
@@ -265,13 +376,13 @@ async def extract_coupon_code_and_stuff(page, full_url):
         try:
             coupon_image = await coupon_image_locator.first.get_attribute('src')
             if coupon_image:
-                log.info(f"✅ Coupon Image found: {coupon_image}")
+                log.info(f"{EMOJI_SUCCESS} Coupon Image found: {coupon_image}")
             else:
-                log.info("❌ Image element found but no src attribute")
+                log.info(f"{EMOJI_FAILED} Image element found but no src attribute")
         except Exception as e:
-            log.info(f"❌ Error extracting image: {e}")
+            log.info(f"{EMOJI_FAILED} Error extracting image: {e}")
     else:
-        log.info("❌ No image found with selector 'div[class*=\"e-component-content-fit\"] img'")
+        log.info(f"{EMOJI_FAILED} No image found with selector 'div[class*=\"e-component-content-fit\"] img'")
 
     # Return both coupon code and image
     if coupon_code:
@@ -626,7 +737,8 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
     if not info.image:
         info.image = _clean_url(post.get("repImageUrl"))
 
-    log.info(f"Extracted coupon: {info.code} → image: {info.image}")
+    # Kuri : Reduce Log Noise
+    log.debug(f"Extracted coupon: {info.code} → image: {info.image}")
     return {
         "coupon_code": info.code,
         "coupon_reward": "\n".join(info.rewards),
@@ -752,7 +864,7 @@ async def send_discord_embed_async(coupon_code: str, coupon_reward: str, coupon_
     response = webhook.execute()
 
     if response.ok:
-        log.info("✅ Discord notification sent!")
+        log.info("{EMOJI_SUCCESS} Discord notification sent!")
     else:
         log.error(f"Failed to send Discord notification. HTTP {response.status_code}")
 
@@ -790,34 +902,54 @@ async def submit_coupon(page, uid, coupon_code):
 
 
 async def submit_coupon_with_retry(page, uid, coupon_code):
-    """Submit coupon with exponential backoff retry"""
+    """Submit coupon with exponential backoff retry
+    Update for using Structured Result, Got response that should be error but success instead
+    """
+
     for attempt in range(MAX_RETRIES):
         try:
-            result = await coupon_breaker.call(submit_coupon, page, uid, coupon_code)
+            raw_message = await coupon_breaker.call(submit_coupon, page, uid, coupon_code)
+            result = CouponResponseParser.parse(uid, coupon_code, raw_message)
 
-            if COUPON_MESSAGE_COOLDOWN in result:
+            # Log based on result type
+            if result.is_success:
+                log.success(f"✔️ Success for UID {uid}: {result.message}")
+                return result
+
+            elif result.should_retry:
                 if attempt == MAX_RETRIES - 1:
-                    # Last attempt failed due to cooldown - mark as failed
-                    log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts (cooldown)")
+                    log.error(f"{EMOJI_FAILED} Failed for {uid} : after {MAX_RETRIES} attempts")
                     if uid not in FAILED_UID_LIST:
                         FAILED_UID_LIST.append(uid)
-                    return None
+                    return result  # Return even on final retry failure
 
                 wait_time = (2 ** attempt) * 30
-                log.warning(
-                    f"Cooldown detected for UID {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time}s...")
+                log.warning(f"🔄 Retry needed for {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time}s...")
                 await asyncio.sleep(wait_time + random.uniform(0, 5))
+                continue  # Explicitly continue to next attempt
+
+            elif result.should_mark_failed:
+                log.error(f"{EMOJI_FAILED} Failed for {uid}:  - {result.message}")
+                if uid not in FAILED_UID_LIST:
+                    FAILED_UID_LIST.append(uid)
+                return result  # Return immediately for permanent failures
+
             else:
+                # Unknown case - treat as failure
+                log.error(f"{EMOJI_FAILED} Unknown Result for {uid}: {result.message}")
+                if uid not in FAILED_UID_LIST:
+                    FAILED_UID_LIST.append(uid)
                 return result
+
         except Exception as e:
-            log.error(f"Error submitting coupon for UID {uid}: {e}")
+            log.error(f"{EMOJI_FAILED} Error submitting coupon for UID {uid}: {e}")
             if attempt == MAX_RETRIES - 1:
                 if uid not in FAILED_UID_LIST:
                     FAILED_UID_LIST.append(uid)
-                return None
+                return None  # Return None on final exception
             await asyncio.sleep(10)
 
-    log.error(f"Failed to submit coupon for UID {uid} after {MAX_RETRIES} attempts")
+    # Fallback return (should never reach here due to loop logic, but for safety)
     if uid not in FAILED_UID_LIST:
         FAILED_UID_LIST.append(uid)
     return None
@@ -837,21 +969,16 @@ async def main_coupon_submit(bm: 'BrowserManager', coupon_code: str, uids_to_pro
             result = await submit_coupon_with_retry(page, uid, coupon_code)
 
             if result:
-                if COUPON_MESSAGE_ALREADY_USED in result:
-                    log.info(f"✓ Coupon already used for UID: {uid}")
-                elif COUPON_MESSAGE_COOLDOWN not in result:
-                    log.success(f"✓ Success for UID {uid}: {result}")
+                if result.is_success:
+                    successful_uids.append(uid)
+                    # Remove from failed list if exists
+                    if uid in FAILED_UID_LIST:
+                        FAILED_UID_LIST.remove(uid)
 
-                successful_uids.append(uid)
-                # Remove from failed list if exists
-                if uid in FAILED_UID_LIST:
-                    FAILED_UID_LIST.remove(uid)
         except Exception as e:
             log.error(f"Error processing UID {uid}: {e}")
-        finally:
-            # Close page after each UID to free resources
-            # await page.context.close()
-            continue
+            if uid not in FAILED_UID_LIST:
+                FAILED_UID_LIST.append(uid)
 
         # Delay between UIDs
         await human_like_delay(5000, 10000)
@@ -869,12 +996,16 @@ async def main_coupon_submit(bm: 'BrowserManager', coupon_code: str, uids_to_pro
 # ============================================================================
 # BROWSER MANAGER
 # ============================================================================
+# ============================================================================
+# BROWSER MANAGER
+# ============================================================================
 class BrowserManager:
-    """Context manager for NoDriver with optional proxy"""
+    """Context manager for NoDriver with optional proxy and proper cleanup"""
 
     def __init__(self):
         self.browser = None
         self.context = None
+        self._cleanup_attempted = False
 
     async def __aenter__(self):
         launch_kwargs = {
@@ -898,15 +1029,44 @@ class BrowserManager:
 
         return self
 
-    async def __aexit__(self, *args):
-        if self.browser:
-            self.browser.stop()
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Proper cleanup with error handling"""
+        if self.browser and not self._cleanup_attempted:
+            self._cleanup_attempted = True
+            try:
+                # Give browser time to finish pending operations
+                await asyncio.sleep(1)
+
+                # Close all pages first
+                if hasattr(self.browser, 'tabs'):
+                    for tab in list(self.browser.tabs):
+                        try:
+                            await tab.close()
+                        except Exception as e:
+                            log.debug(f"Error closing tab: {e}")
+
+                # Stop the browser
+                self.browser.stop()
+
+                # Give OS time to release file handles
+                await asyncio.sleep(0.5)
+
+                log.debug("{EMOJI_SUCCESS} Browser cleanup completed")
+            except Exception as e:
+                log.warning(f"{EMOJI_WARNING} Error during browser cleanup: {e}")
+                # Force stop if graceful shutdown fails
+                try:
+                    if self.browser:
+                        self.browser.stop()
+                except:
+                    pass
+
+        return False  # Don't suppress exceptions
 
     async def create_page(self):
         """Creates new tab (isolated) like Playwright new_context().new_page()"""
         page = await self.browser.get("about:blank")
         return page
-
 
 
 # ============================================================================
@@ -922,7 +1082,7 @@ async def couponstance():
     5. Single browser launch with rolling proxies
     6. Parallel post-processing
     """
-    log.info("🚀 Starting coupon check cycle...")
+    log.info(f"{EMOJI_START} Starting coupon check cycle...")
 
     # ========================================
     # STEP 1: Load State & Proxies (Parallel)
@@ -944,7 +1104,7 @@ async def couponstance():
     # ========================================
     api_result = await get_latest_coupon_cached()
     if not api_result:
-        log.info("❌ No coupon available from API. Exiting.")
+        log.info(f"{EMOJI_FAILED} No coupon available from API. Exiting.")
         return
 
     coupon_code = api_result["coupon_code"]
@@ -969,7 +1129,7 @@ async def couponstance():
 
     # Decision logic
     if is_new_coupon:
-        log.success(f"🎉 NEW COUPON DETECTED: {coupon_code}")
+        log.success(f"{EMOJI_POP} NEW COUPON DETECTED: {coupon_code}")
 
         # Post to Discord immediately if enabled
         if should_post_discord:
@@ -993,7 +1153,7 @@ async def couponstance():
             log.info(f"♻️ Retrying {len(failed_uids)} failed UIDs with coupon: {coupon_code}")
             uids_to_process = failed_uids.copy()
     else:
-        log.info("⚠️ Coupon found in history → updating latest_coupon.txt only")
+        log.info(f"{EMOJI_WARNING} Coupon found in history → updating latest_coupon.txt only")
         await write_line_to_file_async(coupon_code, COUPON_FILE_PATH)
         return
 
@@ -1001,7 +1161,7 @@ async def couponstance():
     # STEP 4: Browser Operations (Rolling Proxies)
     # ========================================
     if (needs_submission or needs_resubmission) and uids_to_process:
-        log.info(f"🌐 Launching browser for {len(uids_to_process)} UIDs...")
+        log.info(f"{EMOJI_BROWSER} Launching browser for {len(uids_to_process)} UIDs...")
         async with BrowserManager() as bm:
             await main_coupon_submit(bm, coupon_code, uids_to_process)
 
@@ -1016,9 +1176,9 @@ async def couponstance():
     # STEP 6: Final Logging
     # ========================================
     if is_new_coupon:
-        log.success("✅ New coupon processed successfully!")
+        log.success("{EMOJI_SUCCESS} New coupon processed successfully!")
     elif is_same_coupon and needs_retry:
-        log.success("✅ Retry cycle completed!")
+        log.success("{EMOJI_SUCCESS} Retry cycle completed!")
 
     log.info("=" * 60)
 
