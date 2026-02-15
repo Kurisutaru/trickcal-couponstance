@@ -42,6 +42,7 @@ import asyncio
 import os
 import random
 import re
+import signal
 import sys
 import zipfile
 from dataclasses import dataclass, field
@@ -737,7 +738,16 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
     if not info.image:
         info.image = _clean_url(post.get("repImageUrl"))
 
-    # Kuri : Reduce Log Noise
+    """
+    Kuri : Reduce Log Noise
+    ! Update 15 Feb 2026 !
+    They adding non numeric / symbol / whatever on the post itself
+    Example
+    - Clean Code : https://game.naver.com/lounge/Trickcal/board/detail/7240062 [5FREESET]
+    - Have added text : https://game.naver.com/lounge/Trickcal/board/detail/7302322 [- SAEHAEBOL]
+    So for time being i will replace non alpanumeric character into empty string
+    """
+    info.code = re.sub(r'\W', '', info.code, flags=re.UNICODE)
     log.debug(f"Extracted coupon: {info.code} → image: {info.image}")
     return {
         "coupon_code": info.code,
@@ -996,11 +1006,8 @@ async def main_coupon_submit(bm: 'BrowserManager', coupon_code: str, uids_to_pro
 # ============================================================================
 # BROWSER MANAGER
 # ============================================================================
-# ============================================================================
-# BROWSER MANAGER
-# ============================================================================
 class BrowserManager:
-    """Context manager for NoDriver with optional proxy and proper cleanup"""
+    """Context manager for NoDriver with proper cleanup and signal handling"""
 
     def __init__(self):
         self.browser = None
@@ -1017,51 +1024,84 @@ class BrowserManager:
             ],
         }
 
-        # Add proxy if needed
         if USE_PROXY and PROXY_URL:
             launch_kwargs["args"].append(f"--proxy-server={PROXY_URL}")
 
-        # Add executable_path only if provided
         if BROWSER_EXECUTABLE_PATH:
             launch_kwargs["browser_executable_path"] = BROWSER_EXECUTABLE_PATH
 
         self.browser = await uc.start(**launch_kwargs)
-
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Proper cleanup with error handling"""
+        """Proper cleanup with event-based waiting"""
+        await self._cleanup()
+        return False
+
+    async def _cleanup(self):
+        """Centralized cleanup logic"""
         if self.browser and not self._cleanup_attempted:
             self._cleanup_attempted = True
             try:
-                # Give browser time to finish pending operations
-                await asyncio.sleep(1)
-
-                # Close all pages first
+                # Close all pages first with proper error handling
                 if hasattr(self.browser, 'tabs'):
+                    close_tasks = []
                     for tab in list(self.browser.tabs):
-                        try:
-                            await tab.close()
-                        except Exception as e:
-                            log.debug(f"Error closing tab: {e}")
+                        close_tasks.append(self._safe_close_tab(tab))
 
-                # Stop the browser
-                self.browser.stop()
+                    # Wait for all tabs to close with timeout
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(*close_tasks, return_exceptions=True),
+                            timeout=5.0
+                        )
+                    except asyncio.TimeoutError:
+                        log.debug("Tab closing timed out")
 
-                # Give OS time to release file handles
-                await asyncio.sleep(0.5)
+                # Stop the browser - this is SYNCHRONOUS, not async
+                # Run it in executor to avoid blocking
+                loop = asyncio.get_event_loop()
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self.browser.stop),
+                    timeout=10.0
+                )
 
-                log.debug("{EMOJI_SUCCESS} Browser cleanup completed")
+                log.debug(f"{EMOJI_SUCCESS} Browser cleanup completed")
+
+            except asyncio.TimeoutError:
+                log.warning(f"{EMOJI_WARNING} Browser cleanup timed out, forcing shutdown...")
+                self._force_cleanup_sync()
             except Exception as e:
                 log.warning(f"{EMOJI_WARNING} Error during browser cleanup: {e}")
-                # Force stop if graceful shutdown fails
-                try:
-                    if self.browser:
-                        self.browser.stop()
-                except:
-                    pass
+                self._force_cleanup_sync()
 
-        return False  # Don't suppress exceptions
+    async def _safe_close_tab(self, tab):
+        """Close a single tab with error handling"""
+        try:
+            await tab.close()
+        except Exception as e:
+            log.debug(f"Error closing tab: {e}")
+
+    def _force_cleanup_sync(self):
+        """Force cleanup - synchronous version"""
+        try:
+            if self.browser:
+                # Call stop() synchronously
+                self.browser.stop()
+                log.debug("Browser stopped via force cleanup")
+        except Exception as e:
+            log.debug(f"Error in stop(): {e}")
+
+        # Last resort: kill the process
+        try:
+            if self.browser and hasattr(self.browser, 'connection'):
+                if hasattr(self.browser.connection, 'process'):
+                    process = self.browser.connection.process
+                    if process and process.poll() is None:
+                        process.kill()
+                        log.debug("Browser process force killed")
+        except Exception as e:
+            log.debug(f"Error force killing process: {e}")
 
     async def create_page(self):
         """Creates new tab (isolated) like Playwright new_context().new_page()"""
@@ -1083,108 +1123,131 @@ async def couponstance():
     6. Parallel post-processing
     """
     log.info(f"{EMOJI_START} Starting coupon check cycle...")
-
-    # ========================================
-    # STEP 1: Load State & Proxies (Parallel)
-    # ========================================
-    tasks = [
-        load_line_from_file_async(COUPON_FILE_PATH),
-        load_lines_from_file_async(PAST_COUPON_FILE_PATH),
-        load_lines_from_file_async(FAILED_FILE_PATH)
-    ]
-
-    latest_coupon, past_coupons_list, failed_uids = await asyncio.gather(*tasks)
-
-    past_coupons = set(past_coupons_list)
-    FAILED_UID_LIST.clear()
-    FAILED_UID_LIST.extend(failed_uids)
-
-    # ========================================
-    # STEP 2: Fetch Latest Coupon (Cached API)
-    # ========================================
-    api_result = await get_latest_coupon_cached()
-    if not api_result:
-        log.info(f"{EMOJI_FAILED} No coupon available from API. Exiting.")
-        return
-
-    coupon_code = api_result["coupon_code"]
-    coupon_reward = api_result["coupon_reward"]
-    coupon_date = api_result["coupon_date"]
-    coupon_image = api_result["coupon_image"]
-
-    # ========================================
-    # STEP 3: Determine Action (Decision Matrix)
-    # ========================================
-    is_new_coupon = coupon_code != latest_coupon and coupon_code not in past_coupons
-    is_same_coupon = coupon_code == latest_coupon
-    is_past_coupon = coupon_code in past_coupons
-
-    needs_retry = is_same_coupon and FAILED_UID_LIST and POST_COUPON
-    needs_submission = is_new_coupon and POST_COUPON and UID_LIST
-    needs_resubmission = is_same_coupon and POST_COUPON and FAILED_UID_LIST
-    should_post_discord = POST_DISCORD and DISCORD_WEBHOOK_URL and is_new_coupon
-
-    uids_to_process = []
+    # Initialize all variables at the start
+    browser_manager = None
     file_tasks = []
+    is_new_coupon = False
+    is_same_coupon = False
+    needs_retry = False
+    coupon_code = None
+    uids_to_process = []
 
-    # Decision logic
-    if is_new_coupon:
-        log.success(f"{EMOJI_POP} NEW COUPON DETECTED: {coupon_code}")
+    try:
+        # Load state
+        tasks = [
+            load_line_from_file_async(COUPON_FILE_PATH),
+            load_lines_from_file_async(PAST_COUPON_FILE_PATH),
+            load_lines_from_file_async(FAILED_FILE_PATH)
+        ]
 
-        # Post to Discord immediately if enabled
-        if should_post_discord:
-            await send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image)
+        latest_coupon, past_coupons_list, failed_uids = await asyncio.gather(*tasks)
+        past_coupons = set(past_coupons_list)
+        FAILED_UID_LIST.clear()
+        FAILED_UID_LIST.extend(failed_uids)
 
-        # Prepare for submission to all UIDs
-        if POST_COUPON and UID_LIST:
-            uids_to_process = UID_LIST.copy()
-            FAILED_UID_LIST.clear()  # Clear failed for new coupon
-            await write_lines_to_file_async([], FAILED_FILE_PATH)  # Clear failed file immediately
+        # Get latest coupon
+        api_result = await get_latest_coupon_cached()
+        if not api_result:
+            log.info(f"{EMOJI_FAILED} No coupon available from API. Exiting.")
+            return
 
-        file_tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
-        file_tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
-    elif needs_resubmission:
-        # For retries, use coupon from latest_coupon.txt.
-        if failed_uids and POST_COUPON:
-            coupon_code = latest_coupon
-            if not coupon_code:
-                log.warning("No latest coupon found for retries. Skipping.")
-                return
-            log.info(f"♻️ Retrying {len(failed_uids)} failed UIDs with coupon: {coupon_code}")
-            uids_to_process = failed_uids.copy()
-    else:
-        log.info(f"{EMOJI_WARNING} Coupon found in history → updating latest_coupon.txt only")
-        await write_line_to_file_async(coupon_code, COUPON_FILE_PATH)
-        return
+        coupon_code = api_result["coupon_code"]
+        coupon_reward = api_result["coupon_reward"]
+        coupon_date = api_result["coupon_date"]
+        coupon_image = api_result["coupon_image"]
 
-    # ========================================
-    # STEP 4: Browser Operations (Rolling Proxies)
-    # ========================================
-    if (needs_submission or needs_resubmission) and uids_to_process:
-        log.info(f"{EMOJI_BROWSER} Launching browser for {len(uids_to_process)} UIDs...")
-        async with BrowserManager() as bm:
-            await main_coupon_submit(bm, coupon_code, uids_to_process)
+        # Determine action
+        is_new_coupon = coupon_code != latest_coupon and coupon_code not in past_coupons
+        is_same_coupon = coupon_code == latest_coupon
+        is_past_coupon = coupon_code in past_coupons
 
-    # ========================================
-    # STEP 5: Post-Processing (Parallel)
-    # ========================================
-    # Execute all tasks in parallel
-    if file_tasks:
-        await asyncio.gather(*file_tasks)
+        needs_retry = is_same_coupon and FAILED_UID_LIST and POST_COUPON
+        needs_submission = is_new_coupon and POST_COUPON and UID_LIST
+        needs_resubmission = is_same_coupon and POST_COUPON and FAILED_UID_LIST
+        should_post_discord = POST_DISCORD and DISCORD_WEBHOOK_URL and is_new_coupon
 
-    # ========================================
-    # STEP 6: Final Logging
-    # ========================================
-    if is_new_coupon:
-        log.success("{EMOJI_SUCCESS} New coupon processed successfully!")
-    elif is_same_coupon and needs_retry:
-        log.success("{EMOJI_SUCCESS} Retry cycle completed!")
+        uids_to_process = []
 
-    log.info("=" * 60)
+        # Decision logic
+        if is_new_coupon:
+            log.success(f"{EMOJI_POP} NEW COUPON DETECTED: {coupon_code}")
+
+            if should_post_discord:
+                await send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image)
+
+            if POST_COUPON and UID_LIST:
+                uids_to_process = UID_LIST.copy()
+                FAILED_UID_LIST.clear()
+                await write_lines_to_file_async([], FAILED_FILE_PATH)
+
+            # Schedule file writes
+            file_tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
+            file_tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
+
+        elif needs_resubmission:
+            if failed_uids and POST_COUPON:
+                coupon_code = latest_coupon
+                if not coupon_code:
+                    log.warning("No latest coupon found for retries. Skipping.")
+                    return
+                log.info(f"♻️ Retrying {len(failed_uids)} failed UIDs with coupon: {coupon_code}")
+                uids_to_process = failed_uids.copy()
+        else:
+            log.info(f"{EMOJI_WARNING} Coupon found in history → updating latest_coupon.txt only")
+            await write_line_to_file_async(coupon_code, COUPON_FILE_PATH)
+            return
+
+        # Browser operations
+        if (needs_submission or needs_resubmission) and uids_to_process:
+            log.info(f"{EMOJI_BROWSER} Launching browser for {len(uids_to_process)} UIDs...")
+            async with BrowserManager() as bm:
+                browser_manager = bm
+                await main_coupon_submit(bm, coupon_code, uids_to_process)
+
+    except KeyboardInterrupt:
+        log.warning(f"{EMOJI_WARNING} Interrupted by user (Ctrl+C)")
+        raise
+
+    except Exception as e:
+        log.error(f"{EMOJI_FAILED} Unexpected error: {e}")
+        raise
+
+    finally:
+        # IMPORTANT: Complete all pending file operations before exit
+        if file_tasks:
+            try:
+                await asyncio.gather(*file_tasks, return_exceptions=True)
+                log.debug("File operations completed")
+            except Exception as e:
+                log.error(f"Error completing file operations: {e}")
+
+        # Final logging
+        if is_new_coupon:
+            log.success(f"{EMOJI_SUCCESS} New coupon processed successfully!")
+        elif is_same_coupon and needs_retry:
+            log.success(f"{EMOJI_SUCCESS} Retry cycle completed!")
+
+        log.info("=" * 60)
 
 
 # ============================================================================
 # ENTRY POINT
 # ============================================================================
 if __name__ == "__main__":
-    asyncio.run(couponstance())
+    def handle_exit(signum, frame):
+        """Handle Ctrl+C gracefully"""
+        log.warning(f"{EMOJI_WARNING} Shutting down gracefully...")
+        sys.exit(0)
+
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+
+    try:
+        asyncio.run(couponstance())
+    except KeyboardInterrupt:
+        log.info(f"{EMOJI_SUCCESS} Program terminated by user")
+    except Exception as e:
+        log.error(f"{EMOJI_FAILED} Fatal error: {e}")
+        sys.exit(1)
