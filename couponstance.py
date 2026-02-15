@@ -44,6 +44,7 @@ import random
 import re
 import signal
 import sys
+import time
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -1234,20 +1235,23 @@ async def couponstance():
 # ENTRY POINT
 # ============================================================================
 if __name__ == "__main__":
-    def handle_exit(signum, frame):
-        """Handle Ctrl+C gracefully"""
-        log.warning(f"{EMOJI_WARNING} Shutting down gracefully...")
-        sys.exit(0)
-
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, handle_exit)
-    signal.signal(signal.SIGTERM, handle_exit)
-
     try:
+        # Run main function
         asyncio.run(couponstance())
+
+        log.info("Script completed successfully")
+
     except KeyboardInterrupt:
         log.info(f"{EMOJI_SUCCESS} Program terminated by user")
+
     except Exception as e:
         log.error(f"{EMOJI_FAILED} Fatal error: {e}")
         sys.exit(1)
+
+    finally:
+        # Ensure all logs are written
+        time.sleep(1)
+
+        # Force immediate exit (works on both Windows and Linux)
+        log.info("Forcing script termination...")
+        os._exit(0)
