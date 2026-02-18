@@ -6,7 +6,7 @@ aiohttp==3.13.3
     # via trickcal-couponstance (pyproject.toml)
 discord-webhook==1.4.1
     # via trickcal-couponstance (pyproject.toml)
-environs==14.3.0
+environs==14.5.0
     # via trickcal-couponstance (pyproject.toml)
 filetype==1.2.0
     # via trickcal-couponstance (pyproject.toml)
@@ -14,7 +14,7 @@ loguru==0.7.3
     # via trickcal-couponstance (pyproject.toml)
 nodriver==0.48.1
     # via trickcal-couponstance (pyproject.toml)
-orjson==3.11.4
+orjson==3.11.7
     # via trickcal-couponstance (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via trickcal-couponstance (pyproject.toml)

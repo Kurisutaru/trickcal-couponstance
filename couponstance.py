@@ -61,7 +61,7 @@ from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from loguru import logger as log
-from typing_extensions import deprecated
+from warnings import deprecated
 
 from stoat_webhook import StoatEmbed, StoatWebhook
 
