@@ -42,7 +42,6 @@ import asyncio
 import os
 import random
 import re
-import signal
 import sys
 import time
 import zipfile
@@ -54,14 +53,17 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiofiles
 import filetype
-import httpx
 import nodriver as uc
 import orjson
 import unicodedata
+from aiohttp import ClientSession, ClientError, ClientTimeout, TCPConnector
 from dateutil import tz
 from discord_webhook import DiscordWebhook, DiscordEmbed
 from environs import env
 from loguru import logger as log
+from typing_extensions import deprecated
+
+from stoat_webhook import StoatEmbed, StoatWebhook
 
 # Load the .env
 env.read_env()
@@ -124,13 +126,17 @@ EMOJI_RETRY = "♻️"
 EMOJI_BROWSER = "🌐"
 EMOJI_START = "🚀"
 EMOJI_POP = "🎉"
+__braille_pattern_blank = '\u2800'
 
 MAX_RETRIES = 3
 
 # Config
-POST_COUPON = env.bool("POST_COUPON")
-POST_DISCORD = env.bool("POST_DISCORD")
+POST_COUPON = env.bool("POST_COUPON", False)
+POST_DISCORD = env.bool("POST_DISCORD", False)
 DISCORD_WEBHOOK_URL = env.str("DISCORD_WEBHOOK_URL")
+POST_STOAT = env.bool("POST_STOAT", False)
+STOAT_WEBHOOK_URL = env.str("STOAT_WEBHOOK_URL")
+GLOBAL_TIMEOUT = 30.0
 
 # Proxy Config
 USE_PROXY = env.bool("USE_PROXY", default=False)
@@ -487,6 +493,136 @@ def _korean_to_utc_epoch_discord(korean: str, tz_src: str = 'Asia/Seoul') -> str
     return f"<t:{int(utc_dt.timestamp())}:f>"
 
 
+@dataclass(frozen=True)
+class RandomEmbedColor:
+    """
+    Generates a random colour and provides it in multiple formats useful for:
+    - Discord: .int, .discord_int
+    - Stoat/Revolt: .hex, .string, .hexcode
+    - General use: .rgb_tuple, .rgba_tuple, .css_rgb, .css_rgba
+    """
+
+    r: int
+    g: int
+    b: int
+    a: int = 255  # alpha (default opaque)
+
+    @classmethod
+    def random(cls) -> "RandomEmbedColor":
+        """Factory method to create a random opaque colour."""
+        return cls(
+            r=random.randint(0, 255),
+            g=random.randint(0, 255),
+            b=random.randint(0, 255),
+            a=255
+        )
+
+    @classmethod
+    def random_pastel(cls, saturation: float = 0.5) -> "RandomEmbedColor":
+        """
+        Generate a random pastel colour.
+
+        Args:
+            saturation: How much to blend with white (0.0-1.0).
+                       0.5 = soft pastels (default)
+                       0.3 = very light pastels
+                       0.7 = more vibrant pastels
+        """
+        # Clamp saturation between 0 and 1
+        saturation = max(0.0, min(1.0, saturation))
+
+        # Generate base random color
+        base_r = random.randint(0, 255)
+        base_g = random.randint(0, 255)
+        base_b = random.randint(0, 255)
+
+        # Mix with white (255, 255, 255) to create pastel
+        # Formula: pastel = base * saturation + white * (1 - saturation)
+        r = int(base_r * saturation + 255 * (1 - saturation))
+        g = int(base_g * saturation + 255 * (1 - saturation))
+        b = int(base_b * saturation + 255 * (1 - saturation))
+
+        return cls(r=r, g=g, b=b, a=255)
+
+    @classmethod
+    def random_with_alpha(cls, alpha: int = 255) -> "RandomEmbedColor":
+        """Random colour with custom alpha (0–255)."""
+        return cls.random().__class__(r=cls.random().r, g=cls.random().g, b=cls.random().b, a=alpha)
+
+    @classmethod
+    def random_gradient(cls) -> str:
+        """Generate a simple random linear gradient for Stoat."""
+        c1 = cls.random().hex
+        c2 = cls.random().hex
+        # direction = random.choice([
+        #     "to right", "to bottom", "135deg", "45deg",
+        #     "to bottom right", "to top left"
+        # ])
+        return f"linear-gradient(to right, {c1}, {c2})"
+
+    @classmethod
+    def random_pastel_gradient(cls, saturation: float = 0.5) -> str:
+        """Generate a pastel gradient for Stoat."""
+        c1 = cls.random_pastel(saturation).hex
+        c2 = cls.random_pastel(saturation).hex
+        return f"linear-gradient(to right, {c1}, {c2})"
+
+    @property
+    def int(self) -> int:
+        """Discord-style integer (0xRRGGBB)."""
+        return (self.r << 16) | (self.g << 8) | self.b
+
+    @property
+    def discord_int(self) -> int:
+        """Same as .int — explicit alias for Discord."""
+        return self.int
+
+    @property
+    def hex(self) -> str:
+        """Stoat-compatible hex string with # prefix (e.g. "#1da1f2")."""
+        return f"#{self.r:02x}{self.g:02x}{self.b:02x}"
+
+    @property
+    def hexcode(self) -> str:
+        """Alias for .hex — no # prefix (e.g. "1da1f2")."""
+        return f"{self.r:02x}{self.g:02x}{self.b:02x}"
+
+    @property
+    def string(self) -> str:
+        """Stoat-compatible string — returns .hex by default."""
+        return self.hex
+
+    @property
+    def rgb_tuple(self) -> tuple[int, int, int]:
+        """(r, g, b) tuple."""
+        return (self.r, self.g, self.b)
+
+    @property
+    def rgba_tuple(self) -> tuple[int, int, int, int]:
+        """(r, g, b, a) tuple."""
+        return (self.r, self.g, self.b, self.a)
+
+    @property
+    def css_rgb(self) -> str:
+        """CSS rgb() format — "rgb(29,161,242)"."""
+        return f"rgb({self.r},{self.g},{self.b})"
+
+    @property
+    def css_rgba(self) -> str:
+        """CSS rgba() format — "rgba(29,161,242,1)"."""
+        alpha = self.a / 255.0
+        return f"rgba({self.r},{self.g},{self.b},{alpha:.2f})".rstrip("0").rstrip(".")
+
+    def __str__(self) -> str:
+        """Default string representation — hex with #."""
+        return self.hex
+
+    def __int__(self) -> int:
+        """Casting to int gives Discord integer."""
+        return self.int
+
+
+@deprecated("Use RandomEmbedColor")
 def get_random_hex_color() -> int:
     """Generate random color for Discord embed"""
     return random.randint(0, 0xFFFFFF)
@@ -774,11 +910,11 @@ async def get_latest_coupon_from_api() -> Optional[Dict[str, str]]:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with ClientSession(timeout=ClientTimeout(GLOBAL_TIMEOUT)) as client:
             resp = await client.get(url, headers=headers)
             resp.raise_for_status()
-            data = resp.json()
-    except httpx.HTTPError as exc:
+            data = await resp.json()
+    except ClientError as exc:
         log.error(f"Failed to fetch coupon feed: {exc}")
         return None
 
@@ -807,9 +943,9 @@ async def detect_extension_async(url: str, sample_bytes: int = 512) -> Optional[
     """Async version - detect image extension from URL"""
     # Try Content-Type header first
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            head = await client.head(url, follow_redirects=True)
-            if head.status_code == 200:
+        async with ClientSession(timeout=ClientTimeout(GLOBAL_TIMEOUT)) as client:
+            head = await client.head(url, allow_redirects=True)
+            if head.status == 200:
                 ct = head.headers.get("Content-Type", "").lower()
                 mime_to_ext = {
                     "image/jpeg": "jpg",
@@ -824,23 +960,23 @@ async def detect_extension_async(url: str, sample_bytes: int = 512) -> Optional[
                 }
                 if ct in mime_to_ext:
                     return mime_to_ext[ct]
-    except httpx.HTTPError:
+    except ClientError:
         pass
 
     # Fallback: read first bytes
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with ClientSession(timeout=ClientTimeout(GLOBAL_TIMEOUT)) as client:
             async with client.stream("GET", url) as r:
                 r.raise_for_status()
                 sample = await r.aread(sample_bytes)
-    except httpx.HTTPError:
+    except ClientError:
         return None
 
     kind = filetype.guess(sample)
     return kind.extension if kind else None
 
 
-async def send_discord_embed_async(coupon_code: str, coupon_reward: str, coupon_date: str, coupon_image: str):
+async def send_discord_embed_async(session: ClientSession, coupon_code: str, coupon_reward: str, coupon_date: str, coupon_image: str):
     """Async Discord webhook post"""
     ext = await detect_extension_async(coupon_image)
     local_filename = f"{coupon_code}.{ext}" if ext else f"{coupon_code}.jpg"
@@ -852,7 +988,7 @@ async def send_discord_embed_async(coupon_code: str, coupon_reward: str, coupon_
     embed_claim_date = f"{claim_date_from} ~ {claim_date_to}"
 
     webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL)
-    embed = DiscordEmbed(title="Trickcal RE:VIVE KR - Coupon", color=get_random_hex_color())
+    embed = DiscordEmbed(title="Trickcal RE:VIVE KR - Coupon", color=RandomEmbedColor.random().discord_int)
 
     embed.set_timestamp()
     embed.set_author(name="ERPINI COUPON POSTER",
@@ -866,18 +1002,52 @@ async def send_discord_embed_async(coupon_code: str, coupon_reward: str, coupon_
     embed.set_footer(text="ERPINI COUPON POSTER powered by 🍬🍭🍰🥖", icon_url="https://i.imgur.com/eTEpq7I.png")
 
     # Download image async
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(coupon_image)
-        webhook.add_file(file=r.content, filename=local_filename)
-        embed.set_image(url=f"attachment://{local_filename}")
+    async with session.get(coupon_image) as resp:
+        if resp.ok:
+            image_data = await resp.read()
+            webhook.add_file(file=image_data, filename=local_filename)
+            embed.set_image(url=f"attachment://{local_filename}")
 
     webhook.add_embed(embed)
     response = webhook.execute()
 
     if response.ok:
-        log.info("{EMOJI_SUCCESS} Discord notification sent!")
+        log.info(f"{EMOJI_SUCCESS} Discord notification sent!")
     else:
         log.error(f"Failed to send Discord notification. HTTP {response.status_code}")
+
+
+async def send_stoat_embed_async(session: ClientSession, coupon_code: str, coupon_reward: str, coupon_date: str, coupon_image: str):
+    """Async Stoat webhook post"""
+    ext = await detect_extension_async(coupon_image)
+
+    split_coupon_date = coupon_date.split('~')
+    claim_date_from = _korean_to_utc_epoch_discord(split_coupon_date[0])
+    claim_date_to = _korean_to_utc_epoch_discord(
+        split_coupon_date[1] if len(split_coupon_date) > 1 else split_coupon_date[0])
+    embed_claim_date = f"{claim_date_from} ~ {claim_date_to}"
+
+    webhook = StoatWebhook(webhook_url=STOAT_WEBHOOK_URL, session=session)
+    embed = StoatEmbed(title="Trickcal RE:VIVE KR - Coupon", colour=RandomEmbedColor.random().hex)
+    webhook.set_content(f"[{__braille_pattern_blank}]({coupon_image})")
+    embed.description = (f"**Coupon Code**\n"
+                         f"```{coupon_code}```\n"
+                         f"**Coupon Reward**\n"
+                         f"```\n"
+                         f"{coupon_reward}\n"
+                         f"```\n"
+                         f"**Coupon Claim Period**\n"
+                         f"{embed_claim_date}\n"
+                         f"**Coupon Claim Method**\n"
+                         f"[Ingame or Click Here]({IOS_COUPON_URL})")
+
+    webhook.add_embed(embed)
+    response = await webhook.execute()
+
+    if response.ok:
+        log.info(f"{EMOJI_SUCCESS} Stoat notification sent!")
+    else:
+        log.error(f"Failed to send Stoat notification. HTTP {response.status}")
 
 
 # ============================================================================
@@ -1166,44 +1336,69 @@ async def couponstance():
         needs_submission = is_new_coupon and POST_COUPON and UID_LIST
         needs_resubmission = is_same_coupon and POST_COUPON and FAILED_UID_LIST
         should_post_discord = POST_DISCORD and DISCORD_WEBHOOK_URL and is_new_coupon
+        should_post_stoat = POST_STOAT and STOAT_WEBHOOK_URL and is_new_coupon
 
         uids_to_process = []
 
-        # Decision logic
-        if is_new_coupon:
-            log.success(f"{EMOJI_POP} NEW COUPON DETECTED: {coupon_code}")
+        # Use AioHTTP
+        # Create aiohttp session with optimized settings
+        connector = TCPConnector(
+            limit=30,
+            limit_per_host=10,
+            ttl_dns_cache=300,
+            force_close=False,
+            enable_cleanup_closed=True
+        )
 
-            if should_post_discord:
-                await send_discord_embed_async(coupon_code, coupon_reward, coupon_date, coupon_image)
+        timeout = ClientTimeout(total=60, connect=10)
 
-            if POST_COUPON and UID_LIST:
-                uids_to_process = UID_LIST.copy()
-                FAILED_UID_LIST.clear()
-                await write_lines_to_file_async([], FAILED_FILE_PATH)
+        async with ClientSession(
+                connector=connector,
+                timeout=timeout,
+                headers={
+                    'User-Agent': 'curl/8.16.0',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                }
+        ) as session:
+            # Decision logic
+            if is_new_coupon:
+                log.success(f"{EMOJI_POP} NEW COUPON DETECTED: {coupon_code}")
 
-            # Schedule file writes
-            file_tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
-            file_tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
+                if should_post_discord:
+                    await send_discord_embed_async(session, coupon_code, coupon_reward, coupon_date, coupon_image)
 
-        elif needs_resubmission:
-            if failed_uids and POST_COUPON:
-                coupon_code = latest_coupon
-                if not coupon_code:
-                    log.warning("No latest coupon found for retries. Skipping.")
-                    return
-                log.info(f"♻️ Retrying {len(failed_uids)} failed UIDs with coupon: {coupon_code}")
-                uids_to_process = failed_uids.copy()
-        else:
-            log.info(f"{EMOJI_WARNING} Coupon found in history → updating latest_coupon.txt only")
-            await write_line_to_file_async(coupon_code, COUPON_FILE_PATH)
-            return
+                if should_post_stoat:
+                    await send_stoat_embed_async(session, coupon_code, coupon_reward, coupon_date, coupon_image)
 
-        # Browser operations
-        if (needs_submission or needs_resubmission) and uids_to_process:
-            log.info(f"{EMOJI_BROWSER} Launching browser for {len(uids_to_process)} UIDs...")
-            async with BrowserManager() as bm:
-                browser_manager = bm
-                await main_coupon_submit(bm, coupon_code, uids_to_process)
+                if POST_COUPON and UID_LIST:
+                    uids_to_process = UID_LIST.copy()
+                    FAILED_UID_LIST.clear()
+                    await write_lines_to_file_async([], FAILED_FILE_PATH)
+
+                # Schedule file writes
+                file_tasks.append(write_line_to_file_async(coupon_code, COUPON_FILE_PATH))
+                file_tasks.append(append_line_to_file_async(coupon_code, PAST_COUPON_FILE_PATH))
+
+            elif needs_resubmission:
+                if failed_uids and POST_COUPON:
+                    coupon_code = latest_coupon
+                    if not coupon_code:
+                        log.warning("No latest coupon found for retries. Skipping.")
+                        return
+                    log.info(f"♻️ Retrying {len(failed_uids)} failed UIDs with coupon: {coupon_code}")
+                    uids_to_process = failed_uids.copy()
+            else:
+                log.info(f"{EMOJI_WARNING} Coupon found in history → updating latest_coupon.txt only")
+                await write_line_to_file_async(coupon_code, COUPON_FILE_PATH)
+                return
+
+            # Browser operations
+            if (needs_submission or needs_resubmission) and uids_to_process:
+                log.info(f"{EMOJI_BROWSER} Launching browser for {len(uids_to_process)} UIDs...")
+                async with BrowserManager() as bm:
+                    browser_manager = bm
+                    await main_coupon_submit(bm, coupon_code, uids_to_process)
 
     except KeyboardInterrupt:
         log.warning(f"{EMOJI_WARNING} Interrupted by user (Ctrl+C)")

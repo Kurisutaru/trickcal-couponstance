@@ -2,21 +2,19 @@
 #    uv pip compile pyproject.toml --output-file requirements.txt --no-deps
 aiofiles==25.1.0
     # via trickcal-couponstance (pyproject.toml)
+aiohttp==3.13.3
+    # via trickcal-couponstance (pyproject.toml)
 discord-webhook==1.4.1
     # via trickcal-couponstance (pyproject.toml)
 environs==14.3.0
     # via trickcal-couponstance (pyproject.toml)
 filetype==1.2.0
     # via trickcal-couponstance (pyproject.toml)
-httpx==0.28.1
-    # via trickcal-couponstance (pyproject.toml)
 loguru==0.7.3
     # via trickcal-couponstance (pyproject.toml)
+nodriver==0.48.1
+    # via trickcal-couponstance (pyproject.toml)
 orjson==3.11.4
-    # via trickcal-couponstance (pyproject.toml)
-playwright==1.55.0
-    # via trickcal-couponstance (pyproject.toml)
-playwright-stealth==2.0.0
     # via trickcal-couponstance (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via trickcal-couponstance (pyproject.toml)
