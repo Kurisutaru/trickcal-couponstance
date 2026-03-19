@@ -39,9 +39,12 @@
 # ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 
 import asyncio
+import atexit
 import os
+import platform
 import random
 import re
+import signal
 import sys
 import time
 import zipfile
@@ -156,6 +159,174 @@ FAILED_FILE_PATH = os.path.join(script_dir, FAILED_FILE_NAME)
 # API Cache
 _api_cache = {"data": None, "timestamp": None}
 CACHE_TTL = timedelta(minutes=5)
+
+
+class ScriptLock:
+    """
+    Prevents multiple instances of the script from running simultaneously.
+
+    Fixes vs original:
+    - Atomic O_CREAT|O_EXCL creation eliminates TOCTOU race condition
+    - /proc/<pid>/cmdline check guards against PID recycling false-positives
+    - `platform` imported once at module level, not per-call
+    - Context manager support (__enter__ / __exit__)
+    - _safe_remove() helper prevents bare os.remove() crashes
+    """
+
+    def __init__(self, lock_file='script.lock', script_dir=None, logger=None):
+        base = script_dir or os.path.dirname(os.path.abspath(__file__))
+        self.lock_file = os.path.join(base, lock_file)
+        self.locked = False
+        self.log = logger
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def acquire(self):
+        """
+        Acquire the lock atomically.
+        - If a live instance already holds it → log and exit.
+        - If the lock file is stale (dead PID or corrupt) → remove and retry.
+        - Uses O_CREAT|O_EXCL so only one process can succeed.
+        """
+        # ── Handle any pre-existing lock file ──────────────────────────
+        if os.path.exists(self.lock_file):
+            try:
+                with open(self.lock_file, 'r') as f:
+                    old_pid = int(f.read().strip())
+
+                if self._is_process_running(old_pid):
+                    self._log('warning',
+                              f"Script already running (PID: {old_pid}). Exiting.")
+                    sys.exit(0)
+                else:
+                    self._log('info',
+                              f"Removing stale lock file (PID: {old_pid} no longer alive)")
+                    self._safe_remove(self.lock_file)
+
+            except (ValueError, IOError):
+                self._log('warning', "Removing invalid/unreadable lock file")
+                self._safe_remove(self.lock_file)
+
+        # ── Atomic creation: only ONE process wins O_CREAT|O_EXCL ──────
+        try:
+            fd = os.open(
+                self.lock_file,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o644,
+            )
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)
+
+        except FileExistsError:
+            # Another process just created it between our check and here
+            self._log('warning',
+                      "Lock file appeared mid-flight (race). Another instance "
+                      "just started. Exiting.")
+            sys.exit(0)
+
+        except OSError as e:
+            self._log('error', f"Failed to create lock file: {e}")
+            sys.exit(1)
+
+        self.locked = True
+        self._log('info', f"Lock acquired (PID: {os.getpid()})")
+
+        atexit.register(self.release)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        return True
+
+    def release(self):
+        """Release the lock by removing the lock file."""
+        if self.locked:
+            self._safe_remove(self.lock_file)
+            self.locked = False
+            self._log('info', "Lock released")
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+        return False  # do not suppress exceptions
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _signal_handler(self, signum, frame):
+        self._log('info', f"Received signal {signum}, releasing lock")
+        self.release()
+        sys.exit(0)
+
+    def _is_process_running(self, pid: int) -> bool:
+        """
+        Check if a process with the given PID is actually still running.
+
+        On Linux/macOS we go one step further than os.kill(pid, 0):
+        we verify /proc/<pid>/cmdline contains our script name to guard
+        against PID recycling (the PID exists but belongs to a different
+        program now).
+        """
+        if platform.system() == "Windows":
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ['tasklist', '/FI', f'PID eq {pid}', '/NH', '/FO', 'CSV'],
+                    capture_output=True, text=True, timeout=5
+                )
+                return str(pid) in result.stdout
+            except (subprocess.SubprocessError, FileNotFoundError):
+                return False
+
+        # ── POSIX ───────────────────────────────────────────────────────
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False  # process is definitely gone
+
+        # Guard against PID recycling on Linux via /proc
+        cmdline_path = f"/proc/{pid}/cmdline"
+        if os.path.exists(cmdline_path):
+            try:
+                with open(cmdline_path, 'rb') as f:
+                    cmdline = f.read().replace(b'\x00', b' ').decode(errors='replace')
+                script_name = os.path.basename(__file__)
+                if script_name not in cmdline:
+                    # PID exists but it's a different program — treat as stale
+                    return False
+            except OSError:
+                pass  # /proc disappeared mid-read → process died, treat as gone
+
+        return True
+
+    @staticmethod
+    def _safe_remove(path: str) -> None:
+        """Remove a file, silently ignoring 'already gone' errors."""
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            # Log if something genuinely unexpected happens
+            print(f"[ScriptLock] Warning: could not remove {path}: {e}",
+                  file=sys.stderr)
+
+    def _log(self, level: str, msg: str) -> None:
+        """Emit a log message through the injected logger or fall back to stderr."""
+        if self.log:
+            getattr(self.log, level)(msg)
+        else:
+            print(f"[ScriptLock/{level.upper()}] {msg}", file=sys.stderr)
 
 
 # ============================================================================
@@ -854,6 +1025,11 @@ def extract_coupon_from_feed(feed_data: Dict[str, Any]) -> Optional[Dict[str, st
         log.info(f"Skip: {post.get('title')}")
         return None
 
+    # Incase needed ?
+    title = post.get("title")
+    created_date = post.get("createdDate")
+    update_date = post.get("updatedDate")
+
     raw = post.get("contents", "")
     if not raw:
         log.info("Empty contents")
@@ -1098,16 +1274,17 @@ async def submit_coupon_with_retry(page, uid, coupon_code):
                 return result
 
             elif result.should_retry:
-                if attempt == MAX_RETRIES - 1:
+                if attempt < MAX_RETRIES - 1:
+                    wait_time = (2 ** attempt) * 30
+                    log.warning(f"🔄 Retry needed for {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time}s...")
+                    await asyncio.sleep(wait_time + random.uniform(0, 5))
+                    continue
+                else:
+                    # All attempts exhausted
                     log.error(f"{EMOJI_FAILED} Failed for {uid} : after {MAX_RETRIES} attempts")
                     if uid not in FAILED_UID_LIST:
                         FAILED_UID_LIST.append(uid)
-                    return result  # Return even on final retry failure
-
-                wait_time = (2 ** attempt) * 30
-                log.warning(f"🔄 Retry needed for {uid}, attempt {attempt + 1}/{MAX_RETRIES}. Waiting {wait_time}s...")
-                await asyncio.sleep(wait_time + random.uniform(0, 5))
-                continue  # Explicitly continue to next attempt
+                    return result
 
             elif result.should_mark_failed:
                 log.error(f"{EMOJI_FAILED} Failed for {uid}:  - {result.message}")
@@ -1274,6 +1451,15 @@ class BrowserManager:
         except Exception as e:
             log.debug(f"Error force killing process: {e}")
 
+        try:
+            import subprocess
+            subprocess.run(["pkill", "-KILL", "-f", "chrome.*--disable-blink"],
+                           capture_output=True)
+            subprocess.run(["pkill", "-KILL", "-f", "Xvfb"],
+                           capture_output=True)
+        except Exception as e:
+            log.debug(f"Error in force pkill: {e}")
+
     async def create_page(self):
         """Creates new tab (isolated) like Playwright new_context().new_page()"""
         page = await self.browser.get("about:blank")
@@ -1430,10 +1616,10 @@ async def couponstance():
 # ENTRY POINT
 # ============================================================================
 if __name__ == "__main__":
+    lock = ScriptLock('couponstance.lock', script_dir=script_dir, logger=log)
+    lock.acquire()
     try:
-        # Run main function
         asyncio.run(couponstance())
-
         log.info("Script completed successfully")
 
     except KeyboardInterrupt:
@@ -1444,9 +1630,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     finally:
-        # Ensure all logs are written
         time.sleep(1)
-
-        # Force immediate exit (works on both Windows and Linux)
+        lock.release()        # ← explicit, intentional
         log.info("Forcing script termination...")
         os._exit(0)
